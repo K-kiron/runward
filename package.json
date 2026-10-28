@@ -1,0 +1,15 @@
+{
+  "name": "runward",
+  "version": "0.1.0",
+  "description": "A local operations desk for coding agents, execution timelines, and handoffs.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node cli.mjs",
+    "demo": "node cli.mjs --demo",
+    "test": "node --test",
+    "check": "node --check server.mjs && node --check cli.mjs && node --check public/app.mjs && node --test"
+  },
+  "license": "MIT"
+}

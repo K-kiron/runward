@@ -1,0 +1,6 @@
+[
+  { "type": "agent.upsert", "data": { "id": "sample-builder", "name": "Sample builder", "project": "Harbor", "provider": "Custom", "status": "idle", "startedAt": "2026-10-28T12:00:00Z", "lastSeen": "2026-10-28T12:01:00Z" } },
+  { "type": "span.upsert", "data": { "id": "sample-check", "agentId": "sample-builder", "laneId": "main", "kind": "tool", "label": "Run contract checks", "startedAt": "2026-10-28T12:00:10Z", "endedAt": "2026-10-28T12:00:50Z", "detail": "Synthetic example: 8 checks passed." } },
+  { "type": "run.upsert", "data": { "id": "sample-run", "agentId": "sample-builder", "project": "Harbor", "model": "Example runner", "status": "passed", "startedAt": "2026-10-28T12:00:00Z", "endedAt": "2026-10-28T12:01:00Z", "checksPassed": 8, "checksTotal": 8 } },
+  { "type": "handoff.offer", "data": { "id": "sample-review", "agentId": "sample-builder", "title": "Review the contract changes", "detail": "Synthetic example. Claiming records ownership only." } }
+]

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Runward is a local workspace for observing coding agents, reviewing runs, and coordinating handoffs.">
+  <title>Runward · Agent operations</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to agent operations</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Runward home"><svg aria-hidden="true" viewBox="0 0 28 28"><path d="M3 7h15l-4-4M3 14h22l-4-4M3 21h15l-4 4"/></svg><span>runward</span></a>
+    <span class="topbar-label">Local agent operations</span>
+    <div class="topbar-actions"><span id="connection" class="connection" role="status">Connecting</span><button id="connect-button" type="button">Connect</button></div>
+  </header>
+  <main id="main" class="canvas">
+    <div id="mode-notice" class="mode-notice" hidden></div>
+    <div id="error-notice" class="error-notice" role="alert" hidden></div>
+    <div class="overview">
+      <div class="page-heading"><div><h1>Agent operations</h1><p id="finding">Waiting for your local event stream.</p></div><button id="refresh-button" class="text-button" type="button">Refresh</button></div>
+      <div id="summary" class="summary" aria-label="Workspace summary"></div>
+      <form id="filters" class="filters" role="search">
+        <div class="field search-field"><label class="sr-only" for="search">Search agents, providers, and projects</label><input id="search" type="search" placeholder="Search agents or projects" autocomplete="off"></div>
+        <div class="filter-selects"><div class="field"><label class="sr-only" for="project">Project</label><select id="project"><option value="">All projects</option></select></div><div class="field"><label class="sr-only" for="provider">Provider</label><select id="provider"><option value="">All providers</option></select></div><div class="field"><label class="sr-only" for="status">Agent status</label><select id="status"><option value="">All statuses</option><option value="working">Working</option><option value="idle">Idle</option><option value="waiting">Waiting</option><option value="offline">Offline</option><option value="stale">Stale</option></select></div><button id="clear-filters" type="button" class="text-button" hidden>Clear</button></div>
+      </form>
+      <section class="panel activity-panel" aria-labelledby="activity-heading">
+        <div class="panel-heading"><h2 id="activity-heading">Activity lanes <span id="agent-count" class="count"></span></h2><div class="heading-tools"><label class="sr-only" for="window">Activity window</label><select id="window"><option value="15">Last 15 minutes</option><option value="60">Last hour</option><option value="all" selected>All recorded activity</option></select></div></div>
+        <div id="activity" class="activity"><p class="empty">Loading agent activity…</p></div>
+        <div class="panel-footer"><div id="activity-legend" class="legend"></div><span id="freshness" class="muted">Awaiting first snapshot</span></div>
+      </section>
+    </div>
+    <section id="inspector" class="panel inspector" aria-labelledby="inspector-name" hidden></section>
+    <div id="onboarding" class="panel onboarding" hidden></div>
+    <div class="lower-grid overview">
+      <section class="panel runs-panel" aria-labelledby="runs-heading"><div class="panel-heading"><h2 id="runs-heading">Recent runs <span id="run-count" class="count"></span></h2><button id="toggle-runs" class="text-button" type="button" hidden>View all</button></div><div id="runs"><p class="empty">Loading runs…</p></div></section>
+      <div class="coordination">
+        <section class="panel attention-panel" aria-labelledby="attention-heading"><div class="panel-heading"><h2 id="attention-heading">Needs attention <span id="attention-count" class="count"></span></h2></div><div id="attention"><p class="empty">Loading requests…</p></div></section>
+        <section class="panel handoff-panel" aria-labelledby="handoffs-heading"><div class="panel-heading"><h2 id="handoffs-heading">Handoffs <span id="handoff-count" class="count"></span></h2><button id="toggle-completed" class="text-button" type="button" aria-pressed="false">Show completed</button></div><p class="section-note">Claims assign work. They do not start an agent.</p><div id="handoffs"><p class="empty">Loading handoffs…</p></div></section>
+      </div>
+    </div>
+    <footer class="page-footer"><span>Local first. Your workspace, in view.</span><span id="access-label">Read-only session</span></footer>
+  </main>
+  <dialog id="connect-dialog" aria-labelledby="connect-title">
+    <form id="connect-form">
+      <div class="dialog-heading"><h2 id="connect-title">Connect to Runward</h2><button id="close-dialog" class="text-button" type="button" aria-label="Close connection dialog">Close</button></div>
+      <p>Read live activity without a token. Unlock coordination to claim handoffs and resolve requests.</p>
+      <label for="operator-name">Your operator name</label><input id="operator-name" name="operator" required maxlength="160" autocomplete="nickname" placeholder="e.g. sam">
+      <label for="access-token">Local server token</label><input id="access-token" name="token" type="password" required autocomplete="off" spellcheck="false" placeholder="Token from your server terminal">
+      <p class="muted">The token stays in this tab's memory and is cleared when you lock or reload.</p>
+      <p id="connect-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="unlock-button" class="primary" type="submit">Unlock coordination</button><button id="lock-button" type="button" hidden>Lock session</button></div>
+    </form>
+    <details class="ingestion-help"><summary>Send activity from a local agent</summary><p>Use the command line from the project folder. The event API also accepts JSON commands at <code>POST /api/events</code> with a bearer token.</p><pre id="ingestion-command"></pre><p class="muted">Only import transcripts you intend to show in this dashboard. See the README for provider limits.</p></details>
+  </dialog>
+  <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+  <noscript><p class="noscript">Runward needs JavaScript to read the local event stream. Enable it and reload this page.</p></noscript>
+</body>
+</html>
