@@ -181,3 +181,232 @@ test('untrusted role and prototype-like values remain ordinary text', () => {
   assert.equal(state.events[0].label, 'Message');
   assert.equal({}.polluted, undefined);
 });
+
+const completed = (item, timing = {}) => ({
+  timestamp: end, type: 'event_msg', payload: {
+    type: 'item_completed', thread_id: 'synthetic-thread', turn_id: 'synthetic-turn', item,
+    started_at_ms: Date.parse(start), completed_at_ms: Date.parse(end), ...timing,
+  },
+});
+
+test('completed items retain reported intervals, errors, and subagent activity without legacy responses', () => {
+  const result = parse([
+    completed({ type: 'Reasoning', id: 'reason', summary_text: [], raw_content: [], encrypted_content: 'opaque-synthetic-data' }),
+    completed({ type: 'AgentMessage', id: 'message', content: [{ type: 'Text', text: 'Fictional update' }] }),
+    completed({ type: 'CommandExecution', id: 'command', command: ['example', '--check'], status: 'failed', exit_code: 2, aggregated_output: 'Fictional failure' }),
+    completed({ type: 'McpToolCall', id: 'mcp', server: 'sample', tool: 'lookup', arguments: {}, status: 'completed', result: { isError: true, content: [] } }),
+    completed({ type: 'SubAgentActivity', id: 'subagent', kind: 'spawn', agent_path: '/synthetic/worker' }),
+    completed({ type: 'FileChange', id: 'file', status: 'completed', changes: {}, stdout: '', stderr: '' }),
+    completed({ type: 'ImageView', id: 'image', path: 'fictional-image.png' }),
+    completed({ type: 'ContextCompaction', id: 'compact' }),
+    completed({ type: 'Extension', id: 'extension', kind: 'synthetic-extension', action: {}, results: [] }),
+  ]);
+  assert.equal(spans(result).length, 9);
+  assert.equal(spans(result).filter((span) => span.kind === 'error').length, 2);
+  assert.equal(spans(result).filter((span) => span.kind === 'subagent').length, 1);
+  assert.equal(spans(result).filter((span) => span.kind === 'thinking').length, 1);
+  assert.ok(spans(result).every((span) => Date.parse(span.endedAt) - Date.parse(span.startedAt) === 5000));
+  assert.ok(spans(result).every((span) => !span.detail.includes('opaque-synthetic-data')));
+  assert.equal(agent(result).status, 'unknown');
+  assert.deepEqual(validateSnapshot(applyCommands(emptyState(), result.commands)).events.length, 9);
+});
+
+test('completed records deduplicate later responses and upgrade persisted fallback span IDs', () => {
+  const fallback = [
+    event(end, { type: 'reasoning', id: 'reason', summary: [{ type: 'summary_text', text: 'Synthetic summary' }] }),
+    event(end, { type: 'message', id: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Synthetic response' }] }),
+    event(start, { type: 'function_call', call_id: 'tool', name: 'lookup', namespace: 'sample', arguments: '{}' }),
+    event(end, { type: 'function_call_output', call_id: 'tool', output: 'Synthetic result' }),
+  ];
+  const first = parse(fallback);
+  const complete = [
+    completed({ type: 'Reasoning', id: 'reason', summary_text: ['Synthetic summary'], raw_content: [] }),
+    completed({ type: 'AgentMessage', id: 'message', content: [{ type: 'Text', text: 'Synthetic response' }] }),
+    completed({ type: 'McpToolCall', id: 'tool', server: 'sample', tool: 'lookup', arguments: {}, status: 'failed', result: { isError: true } }),
+  ];
+  const updated = parse([...complete, ...fallback]);
+  assert.equal(spans(updated).length, 3);
+  assert.deepEqual(spans(updated).map((span) => span.id).sort(), spans(first).map((span) => span.id).sort());
+  const state = applyCommands(applyCommands(emptyState(), first.commands), updated.commands);
+  assert.equal(state.events.length, 3);
+  assert.ok(state.events.every((span) => Date.parse(span.endedAt) - Date.parse(span.startedAt) === 5000));
+  assert.equal(state.events.filter((span) => span.kind === 'error').length, 1);
+  assert.deepEqual(parse([...fallback, ...complete]).commands, updated.commands);
+});
+
+test('a completion-only item keeps its identity when a matching tool response arrives later', () => {
+  const item = completed({ type: 'AgentMessage', id: 'question', content: [], questions: [{ id: 'synthetic-question', question: 'Pick a fictional color' }] });
+  const first = parse([item]);
+  const updated = parse([item,
+    event(start, { type: 'function_call', call_id: 'question', name: 'request_user_input', arguments: '{}' }),
+    event(end, { type: 'function_call_output', call_id: 'question', output: 'Synthetic answer' }),
+  ]);
+  assert.equal(spans(first).length, 1);
+  assert.equal(spans(updated).length, 1);
+  assert.equal(spans(first)[0].id, spans(updated)[0].id);
+});
+
+test('invalid completed timing retains legacy pairing and warns instead of inventing an interval', () => {
+  const result = parse([
+    completed({ type: 'McpToolCall', id: 'tool', server: 'sample', tool: 'lookup', status: 'failed' }, { started_at_ms: Date.parse(end), completed_at_ms: Date.parse(start) }),
+    event(start, { type: 'function_call', call_id: 'tool', name: 'lookup', arguments: '{}' }),
+    event(end, { type: 'function_call_output', call_id: 'tool', output: 'Synthetic result' }),
+    completed({ type: 'Reasoning', id: 'unknown-time', summary_text: [] }, { started_at_ms: null, completed_at_ms: 0 }),
+  ]);
+  assert.equal(spans(result).length, 2);
+  const tool = spans(result).find((span) => span.kind === 'error');
+  assert.equal(Date.parse(tool.endedAt) - Date.parse(tool.startedAt), 5000);
+  const unknown = spans(result).find((span) => span.kind === 'thinking');
+  assert.equal(unknown.startedAt, unknown.endedAt);
+  assert.ok(result.warnings.some((warning) => /timing|duration/.test(warning)));
+});
+
+test('first child metadata owns identity and explicit ordinal excludes inherited history before sorting', () => {
+  const earlier = '2026-01-01T09:00:00Z';
+  const rows = [
+    { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-thread', timestamp: start, cwd: '/fictional/child', parent_thread_id: 'synthetic-parent', forked_from_id: 'synthetic-parent', subagent_history_start_ordinal: 5 } },
+    { timestamp: earlier, type: 'session_meta', payload: { id: 'synthetic-parent', timestamp: earlier, cwd: '/fictional/parent' } },
+    event(earlier, { type: 'message', id: 'inherited-message', role: 'user', content: [{ type: 'input_text', text: 'Inherited fictional content' }] }),
+    { timestamp: earlier, type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 999 } } } },
+    { timestamp: earlier, type: 'turn_context', payload: {} },
+    { timestamp: start, type: 'event_msg', payload: { type: 'thread_settings_applied', thread_id: 'synthetic-thread' } },
+    completed({ type: 'Reasoning', id: 'own-reason', summary_text: ['Own fictional summary'] }),
+  ];
+  const result = parse(rows);
+  assert.equal(agent(result).name, 'Codex synthetic-thread');
+  assert.equal(agent(result).cwd, '/fictional/child');
+  assert.equal(agent(result).project, 'child');
+  assert.equal(agent(result).startedAt, '2026-01-02T09:00:00.000Z');
+  assert.equal(agent(result).contextUsed, null);
+  assert.equal(spans(result).length, 1);
+  assert.ok(spans(result).every((span) => !span.detail.includes('Inherited')));
+});
+
+test('unusable history boundaries preserve first identity and retain unproven history with a warning', () => {
+  for (const boundary of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '2', null]) {
+    const result = parse([
+      { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-thread', cwd: '/fictional/child', parent_thread_id: 'synthetic-parent', subagent_history_start_ordinal: boundary } },
+      { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-parent', cwd: '/fictional/parent' } },
+      event(end, { type: 'message', id: 'retained', role: 'user', content: [{ type: 'input_text', text: 'Retain this synthetic history' }] }),
+    ]);
+    assert.equal(agent(result).name, 'Codex synthetic-thread');
+    assert.equal(agent(result).cwd, '/fictional/child');
+    assert.equal(spans(result).length, 1);
+    assert.ok(result.warnings.some((warning) => warning.includes('boundary')));
+  }
+});
+
+test('completed user records without a stable response link are omitted, not heuristically duplicated', () => {
+  const result = parse([
+    completed({ type: 'UserMessage', id: 'typed-user', content: [{ type: 'Text', text: 'Synthetic user request' }] }),
+    event(start, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Synthetic user request' }] }),
+  ]);
+  assert.equal(spans(result).length, 1);
+});
+
+test('a child log with an incomplete appended tail never reimports its inherited prefix', () => {
+  const rows = [
+    { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-thread', timestamp: start, cwd: '/fictional/child', parent_thread_id: 'synthetic-parent', subagent_history_start_ordinal: 3 } },
+    '',
+    { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-parent', timestamp: start, cwd: '/fictional/parent' } },
+    event(start, { type: 'message', id: 'inherited', role: 'assistant', content: [{ type: 'output_text', text: 'Never import this inherited fixture' }] }),
+    { timestamp: start, type: 'event_msg', payload: { type: 'thread_settings_applied', thread_id: 'synthetic-thread' } },
+    completed({ type: 'Reasoning', id: 'own-reason', summary_text: ['Own fixture summary'] }),
+  ];
+  const initial = parse(rows);
+  const partial = parse([...rows, '{"timestamp":']);
+  assert.deepEqual(partial.commands, initial.commands);
+  const updated = applyCommands(applyCommands(emptyState(), initial.commands), partial.commands);
+  assert.equal(updated.events.length, 1);
+  assert.ok(updated.events.every((span) => !span.detail.includes('inherited')));
+  assert.ok(partial.warnings.some((warning) => warning.includes('incomplete or malformed')));
+});
+
+test('corruption before an inherited-history boundary does not permit an unproven cut', () => {
+  const result = parse([
+    { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-thread', cwd: '/fictional/child', parent_thread_id: 'synthetic-parent', subagent_history_start_ordinal: 2 } },
+    '{broken}',
+    event(start, { type: 'message', id: 'retained', role: 'assistant', content: [{ type: 'output_text', text: 'Retained when record numbering is uncertain' }] }),
+    completed({ type: 'Reasoning', id: 'own-reason', summary_text: [] }),
+  ]);
+  assert.equal(spans(result).length, 2);
+  assert.ok(result.warnings.some((warning) => warning.includes('unverified subagent history boundary')));
+});
+
+test('completion-only messages and reasoning keep their IDs after matching response append', () => {
+  const items = [
+    completed({ type: 'AgentMessage', id: 'message', content: [{ type: 'Text', text: 'Synthetic message' }] }),
+    completed({ type: 'Reasoning', id: 'reason', summary_text: ['Synthetic summary'] }),
+  ];
+  const first = parse(items);
+  const appended = parse([...items,
+    event(end, { type: 'message', id: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Synthetic message' }] }),
+    event(end, { type: 'reasoning', id: 'reason', summary: [{ type: 'summary_text', text: 'Synthetic summary' }] }),
+  ]);
+  const state = applyCommands(applyCommands(emptyState(), first.commands), appended.commands);
+  assert.equal(state.events.length, 2);
+  assert.deepEqual(state.events.map((span) => span.id).sort(), spans(first).map((span) => span.id).sort());
+});
+
+test('completed errors use explicit status, exit code, or isError, never output prose', () => {
+  const result = parse([
+    completed({ type: 'CommandExecution', id: 'nonzero', exit_code: 7, aggregated_output: 'Done' }),
+    completed({ type: 'CommandExecution', id: 'status', status: 'failed', aggregated_output: 'Done' }),
+    completed({ type: 'McpToolCall', id: 'flag', result: { isError: true } }),
+    completed({ type: 'McpToolCall', id: 'unknown', result: { content: [{ type: 'text', text: 'error: synthetic prose only' }] } }),
+    completed({ type: 'CommandExecution', id: 'no-exit-code', status: 'unrecognized-status', aggregated_output: 'failed: synthetic prose only' }),
+  ]);
+  assert.equal(spans(result).filter((span) => span.kind === 'error').length, 3);
+  assert.equal(spans(result).filter((span) => span.kind === 'tool').length, 2);
+  assert.equal(result.commands.some((command) => command.type === 'run.upsert'), false);
+});
+
+test('invalid completed timing does not close a fallback tool with an absent result', () => {
+  const result = parse([
+    event(start, { type: 'function_call', call_id: 'open', name: 'lookup', arguments: '{}' }),
+    completed({ type: 'McpToolCall', id: 'open', server: 'sample', tool: 'lookup' }, { started_at_ms: Date.parse(start), completed_at_ms: null }),
+  ]);
+  assert.equal(spans(result).length, 1);
+  assert.equal(spans(result)[0].startedAt, '2026-01-02T09:00:00.000Z');
+  assert.equal(spans(result)[0].endedAt, null);
+});
+
+test('a future child-history boundary defers the prefix throughout initial append and persistence', () => {
+  const prefix = [
+    { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-thread', timestamp: start, cwd: '/fictional/child', parent_thread_id: 'synthetic-parent', subagent_history_start_ordinal: 4 } },
+    { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-parent', timestamp: start, cwd: '/fictional/parent' } },
+    event(start, { type: 'message', id: 'inherited-first', role: 'assistant', content: [{ type: 'output_text', text: 'Inherited synthetic prefix' }] }),
+  ];
+  const initial = parse(prefix);
+  assert.equal(spans(initial).length, 0);
+  assert.equal(agent(initial).name, 'Codex synthetic-thread');
+  assert.equal(agent(initial).cwd, '/fictional/child');
+  assert.ok(initial.warnings.some((warning) => warning.includes('not yet reached')));
+  const partial = parse([...prefix, '{"timestamp":']);
+  assert.deepEqual(partial.commands, initial.commands);
+  const appended = parse([...prefix,
+    event(start, { type: 'message', id: 'inherited-second', role: 'assistant', content: [{ type: 'output_text', text: 'Another inherited synthetic record' }] }),
+    { timestamp: start, type: 'event_msg', payload: { type: 'thread_settings_applied', thread_id: 'synthetic-thread' } },
+    completed({ type: 'Reasoning', id: 'own-reason', summary_text: ['Own synthetic activity'] }),
+  ]);
+  let state = applyCommands(emptyState(), initial.commands);
+  state = applyCommands(state, partial.commands);
+  state = applyCommands(state, appended.commands);
+  assert.equal(state.events.length, 1);
+  assert.equal(state.events[0].detail, 'Own synthetic activity');
+  assert.equal(state.agents[0].name, 'Codex synthetic-thread');
+  assert.equal(state.agents[0].cwd, '/fictional/child');
+});
+
+test('an unreached safe boundary is pending, while an unlinked boundary remains unverified', () => {
+  const rows = (linked) => [
+    { timestamp: start, type: 'session_meta', payload: { id: 'synthetic-thread', cwd: '/fictional/child', ...(linked ? { parent_thread_id: 'synthetic-parent' } : {}), subagent_history_start_ordinal: 100 } },
+    event(start, { type: 'message', id: 'history', role: 'user', content: [{ type: 'input_text', text: 'Synthetic history' }] }),
+  ];
+  const pending = parse(rows(true));
+  assert.equal(spans(pending).length, 0);
+  assert.ok(pending.warnings.some((warning) => warning.includes('not yet reached')));
+  const unlinked = parse(rows(false));
+  assert.equal(spans(unlinked).length, 1);
+  assert.ok(unlinked.warnings.some((warning) => warning.includes('unverified subagent history boundary')));
+});

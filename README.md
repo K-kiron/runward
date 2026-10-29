@@ -64,7 +64,7 @@ State writes are serialized and replaced atomically after flushing the temporary
 
 This is an independent implementation based on the visible feature set in two screenshots of an agent dashboard. Its layout, code, example data, and event protocol are original. No original executable, web application, source code, or traffic capture was available. Screenshot analysis establishes visible features only; it does not establish internal behavior or protocol compatibility. Runward does not claim compatibility with that dashboard.
 
-Transcript adapters are best-effort readers of documented/common record shapes. Timestamp-based intervals are observations at log-record boundaries, not a profiler. Missing metrics remain unknown. A finished conversation is not automatically a passed verification run.
+Transcript adapters are best-effort readers of documented/common record shapes. Completed-item timings use explicit producer timestamps; older formats fall back to log-record boundaries. Missing metrics remain unknown. A finished conversation is not automatically a passed verification run. See [adapter coverage and upgrade notes](docs/adapters.md) before reimporting state created by version 0.1.0.
 
 ## Development
 
