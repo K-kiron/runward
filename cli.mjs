@@ -6,16 +6,21 @@ import { homedir } from 'node:os';
 import { createServer } from './server.mjs';
 import { demoState } from './lib/demo.mjs';
 import { watchTranscripts } from './lib/watch.mjs';
+import { TRANSCRIPT_PROVIDERS } from './lib/adapters.mjs';
 
 const help = `Runward — local operations desk for coding agents
 
   node cli.mjs [--port 4317] [--data path/to/state.json]
   node cli.mjs --demo
   node cli.mjs --watch "claude=/absolute/session.jsonl" --watch "codex=/absolute/rollout.jsonl"
+  node cli.mjs --watch "dsh=/absolute/session.v4.jsonl.zstd"
+  node cli.mjs --watch "opencode=/absolute/session.json" --watch "openhands=/absolute/events.jsonl"
+  node cli.mjs --watch "gemini=/absolute/session.jsonl"
   node cli.mjs ingest path/to/events.json [--port 4317]
 
 Requires Node.js 22+. Binds only to 127.0.0.1. Demo data stays in memory.
 Live data defaults to ~/.runward/state.json. Original transcript files are read only.
+Transcript providers: ${TRANSCRIPT_PROVIDERS.join(', ')}. See docs/adapters.md for capture commands.
 Set RUNWARD_TOKEN in the process environment to reuse a write token (16–256 characters).
 Otherwise a temporary token is printed on startup. Tokens never belong in a URL or repository.
 Ingest requires RUNWARD_TOKEN and a JSON command or command array. See docs/events.md.
@@ -42,8 +47,8 @@ try {
     if (positionals.length) throw new Error(`Unknown command.\n${help}`);
     if (values.demo && (values.data || values.watch)) throw new Error('Demo cannot use live storage or transcript files');
     const sources = (values.watch ?? []).map(value => {
-      const match = /^(claude|codex)=(.+)$/.exec(value);
-      if (!match) throw new Error('Use --watch "claude=/path/file.jsonl" or --watch "codex=/path/file.jsonl"');
+      const match = /^([^=]+)=(.+)$/.exec(value);
+      if (!match || !TRANSCRIPT_PROVIDERS.includes(match[1])) throw new Error(`Use --watch "provider=/path/file"; providers: ${TRANSCRIPT_PROVIDERS.join(', ')}`);
       return { provider: match[1], path: resolve(match[2]) };
     });
     const app = await createServer({ state: values.demo ? demoState() : undefined,

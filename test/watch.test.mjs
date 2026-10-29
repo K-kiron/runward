@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { watchTranscripts } from '../lib/watch.mjs';
 import { applyCommands, emptyState } from '../lib/model.mjs';
+import * as zlib from 'node:zlib';
 
 async function until(predicate) {
   const deadline = Date.now() + 5000;
@@ -134,4 +135,57 @@ test('acknowledgments retain only the current parser command set', async t => {
   assert.equal(batches[1].length, 1);
   assert.equal(batches[1][0].data.detail, 'Synthetic first');
   assert.equal(state.events.length, 2);
+});
+
+test('concatenated Zstandard frames import every frame and recover from a partial append', { skip: !zlib.zstdCompressSync }, async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'runward-zstd-'));
+  const path = join(folder, 'session.jsonl.zstd');
+  const call = { timestamp: '2026-01-02T09:00:00Z', type: 'response_item', payload: { type: 'function_call', call_id: 'synthetic-call', name: 'read', arguments: '{}' } };
+  const result = { timestamp: '2026-01-02T09:00:05Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'synthetic-call', output: 'fixture' } };
+  const first = zlib.zstdCompressSync(Buffer.from(JSON.stringify(call) + '\n'));
+  const second = zlib.zstdCompressSync(Buffer.from(JSON.stringify(result) + '\n'));
+  await writeFile(path, first);
+  let state = emptyState();
+  const warnings = [];
+  const stop = watchTranscripts([{ provider: 'codex', path }], async commands => { state = applyCommands(state, commands); }, warning => warnings.push(warning), 10);
+  t.after(async () => { await stop(); await rm(folder, { recursive: true, force: true }); });
+  await until(() => state.events.length === 1);
+  assert.equal(state.events[0].endedAt, null);
+  const revision = state.revision;
+  await appendFile(path, second.subarray(0, 3));
+  await until(() => warnings.some(warning => !warning.includes('transcript warning')));
+  assert.equal(state.revision, revision);
+  await appendFile(path, second.subarray(3));
+  await until(() => state.events[0].endedAt !== null);
+  assert.equal(state.events.length, 1);
+  assert.equal(state.events[0].endedAt, '2026-01-02T09:00:05.000Z');
+  assert.deepEqual(await readFile(path), Buffer.concat([first, second]));
+});
+
+test('compressed inputs cannot bypass the uncompressed size limit', { skip: !zlib.zstdCompressSync }, async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'runward-zstd-limit-'));
+  const path = join(folder, 'session.jsonl.zstd');
+  await writeFile(path, zlib.zstdCompressSync(Buffer.alloc(32 * 1024 * 1024 + 1, 32)));
+  const errors = [];
+  let writes = 0;
+  const stop = watchTranscripts([{ provider: 'dsh', path }], async () => { writes++; }, error => errors.push(error), 10);
+  t.after(async () => { await stop(); await rm(folder, { recursive: true, force: true }); });
+  await until(() => errors.length > 0);
+  assert.equal(writes, 0);
+});
+
+test('Windows UTF-16 redirected exports import without changing their source encoding', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'runward-utf16-'));
+  const path = join(folder, 'session.json');
+  const recording = { sessionId: 'synthetic-session', startTime: '2026-01-02T09:00:00Z', messages: [
+    { id: 'synthetic-message', type: 'user', timestamp: '2026-01-02T09:00:00Z', content: 'Fictional café 示例' },
+  ] };
+  const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify(recording), 'utf16le')]);
+  await writeFile(path, bytes);
+  let state = emptyState();
+  const stop = watchTranscripts([{ provider: 'gemini', path }], async commands => { state = applyCommands(state, commands); }, () => {}, 10);
+  t.after(async () => { await stop(); await rm(folder, { recursive: true, force: true }); });
+  await until(() => state.events.length === 1);
+  assert.equal(state.events[0].detail, 'Fictional café 示例');
+  assert.deepEqual(await readFile(path), bytes);
 });

@@ -12,7 +12,7 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute:
 const shortTimeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
 const numberFormat = new Intl.NumberFormat(undefined);
 const moneyFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
-const ingestionCommand = 'node cli.mjs --watch "codex=/path/to/session.jsonl"\nnode cli.mjs --watch "claude=/path/to/session.jsonl"\nnode cli.mjs ingest /path/to/events.json';
+const ingestionCommand = 'node cli.mjs --watch "codex=/path/to/session.jsonl"\nnode cli.mjs --watch "claude=/path/to/session.jsonl"\nnode cli.mjs --watch "dsh=/path/to/session.v4.jsonl.zstd"\nnode cli.mjs --watch "opencode=/path/to/session.json"\nnode cli.mjs --watch "openhands=/path/to/events.jsonl"\nnode cli.mjs --watch "gemini=/path/to/session.jsonl"\nnode cli.mjs ingest /path/to/events.json';
 
 function node(tag, className, text, attributes = {}) {
   const element = document.createElement(tag);

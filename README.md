@@ -29,7 +29,7 @@ Live mode starts empty and persists to `~/.runward/state.json`. Use `--data` to 
 - Console and chronological event views; run results with check counts and failure details.
 - Attention items with explicit resolution, and handoffs with claim, release, and complete transitions.
 - Live updates through server-sent events, with reconnect and stale-state feedback.
-- Selected-file transcript import for common Claude Code and Codex JSONL records, plus a provider-neutral event API.
+- Selected-file transcript import for Codex, Claude Code, DSH (DeepSeek Harness), OpenCode, OpenHands, and Gemini CLI, plus a provider-neutral event API.
 
 Claims are coordination records. They **do not launch agents, send prompts, approve tool calls, or execute terminal commands**. Console content is read only. Provider names identify incoming data, not an affiliation.
 
@@ -39,9 +39,13 @@ Choose specific transcript files; Runward never scans your home directory or edi
 
 ```sh
 node cli.mjs --watch "claude=/absolute/path/session.jsonl" --watch "codex=/absolute/path/rollout.jsonl"
+node cli.mjs --watch "dsh=/absolute/path/session.v4.jsonl.zstd"
+node cli.mjs --watch "opencode=/absolute/path/session.json"
+node cli.mjs --watch "openhands=/absolute/path/events.jsonl"
+node cli.mjs --watch "gemini=/absolute/path/session.jsonl"
 ```
 
-On Windows, pass paths such as `--watch "codex=C:\work\logs\rollout.jsonl"`. Selected files are polled every two seconds. Only recognized records become events. See [adapter coverage](docs/adapters.md) for supported fields and timing limits.
+On Windows, pass paths such as `--watch "codex=C:\work\logs\rollout.jsonl"`. Combine `--watch` options to view different tools together. Selected files are polled every two seconds. DSH Zstandard logs require Node.js 22.15+ with Zstandard support. See [adapter coverage and capture commands](docs/adapters.md) to select the correct export format; OpenHands logs without timezone offsets need the supplied capture helper.
 
 For your own agent or runner, submit explicit events using [the event API](docs/events.md):
 

@@ -1,6 +1,6 @@
 {
   "name": "runward",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A local operations desk for coding agents, execution timelines, and handoffs.",
   "type": "module",
   "private": true,
