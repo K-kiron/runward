@@ -9,14 +9,14 @@ The App is a separate installable directory, not a separate repository. Its comm
 Use Agent Canvas with a supported **local Agent Server backend** exposing the Canvas Extensions API. The current Apps beta is unavailable with an OpenHands Cloud backend.
 
 1. Open **Customize > Apps > Add app**.
-2. Choose **Git Repository** and enter:
-   - Git source: `github:K-kiron/runward`
-   - Repo path: `apps/openhands`
-   - Ref: a reviewed branch, tag, or commit containing this directory. For an unmerged pull request, select its branch or commit; do not select an older `main` revision without the App.
-3. Add the App, review its resolved revision and manifest, then enable it after reviewing the trusted-code notice.
-4. Open **Runward** in the Canvas sidebar and select a conversation.
+2. Fill in the install form:
+   - **App source**: `github:K-kiron/runward`
+   - **Path** (called **Repo path** in some versions): `apps/openhands`
+   - **Ref**: a reviewed branch, tag, or commit containing this directory. The App is available on `main`; use a reviewed tag or commit for a repeatable installation.
+3. Select **Install**, review the App's resolved revision and manifest, then enable it after reviewing the trusted-code notice.
+4. Open **Runward timeline** (or **Runward**, depending on the host's label) in the Canvas sidebar and select a conversation.
 
-For a local checkout, choose **Backend-Local Path** and enter the absolute path to this directory on the **Agent Server machine**. A browser-machine path is insufficient when the server runs elsewhere.
+These form labels match Agent Canvas 1.34.0. For a local checkout, enter the absolute path to this directory on the **Agent Server machine** in **App source**, leaving **Ref** and **Path** empty. A browser-machine path is insufficient when the server runs elsewhere.
 
 See the upstream [Apps installation and trust documentation](https://docs.openhands.dev/openhands/usage/agent-canvas/canvas-extensions).
 
@@ -72,17 +72,17 @@ The build script assembles a fixed set of dependency-free modules into the insta
 
 The implementation follows manifest schema 1 and host API 1. Those APIs are beta and may change. Unsupported hosts fail with a visible compatibility error; older servers may reject the history routes.
 
-Automated fixtures are synthetic. The browser page was also exercised in a local host-contract fixture for timing controls, event selection, empty/error states, narrow layout, and disposal. This fixture is not an installed Agent Canvas host.
+The installed App was tested in the real **Agent Canvas 1.34.0** frontend, running from its released tag in frontend-only mode with mocks disabled, against official Agent Server/SDK/tools **1.58.1** and **1.59.0**. Tests covered Git subdirectory and backend-local installation, trusted activation, recorded activity, pagination, timestamp controls, keyboard selection, narrow layout, refresh, update, disable, re-enable, uninstall, backend isolation, and connection loss. See the [verification record and repeatable checks](../../docs/openhands-canvas-validation.md) for the exact combinations and scope.
 
-A separate HTTP smoke check ran official Agent Server, SDK, and tools version **1.59.0** with Python **3.12.14**, a fresh synthetic idle conversation, and messages submitted with `run:false`. Conversation search, event search, sort directions, and event pagination succeeded. No model inference or tool execution was requested. This validates the history endpoints, not installation into actual Canvas or live model/tool activity. Neither check establishes production use or compatibility with every release.
+These were isolated local backends with synthetic SDK-valid histories, not production deployments. No model inference or agent tool execution was requested. Automated malformed-response, retention and late-disposal regressions also use synthetic fixtures. The released desktop installer, protected backends, OpenHands Cloud, and live model/tool activity were not verified. These checks do not establish compatibility with every release.
 
 The existing file-based adapter remains available for CLI captures in the [transcript adapter guide](../../docs/adapters.md).
 
 Primary references:
 
 - [Apps (Beta)](https://docs.openhands.dev/openhands/usage/agent-canvas/canvas-extensions).
-- [Upstream minimal App fixture at the checked Canvas revision](https://github.com/OpenHands/OpenHands/tree/64b35695c45775d5624c9c37e31e9d75bc8e804f/src/fixtures/canvas-extensions/demo-page).
-- [Canvas host API types](https://github.com/OpenHands/OpenHands/blob/64b35695c45775d5624c9c37e31e9d75bc8e804f/src/types/canvas-extension.ts) and [authenticated request helper](https://github.com/OpenHands/OpenHands/blob/64b35695c45775d5624c9c37e31e9d75bc8e804f/src/api/canvas-extensions-service.ts).
+- [Upstream minimal App fixture in Canvas 1.34.0](https://github.com/OpenHands/OpenHands/tree/6c120073f5a1e1c838ba6fdd9a075c79ff997b98/src/fixtures/canvas-extensions/demo-page).
+- [Released Canvas host API types](https://github.com/OpenHands/OpenHands/blob/6c120073f5a1e1c838ba6fdd9a075c79ff997b98/src/types/canvas-extension.ts) and [authenticated request helper](https://github.com/OpenHands/OpenHands/blob/6c120073f5a1e1c838ba6fdd9a075c79ff997b98/src/api/canvas-extensions-service.ts).
 - Agent Server [conversation routes](https://github.com/OpenHands/software-agent-sdk/blob/c3985a4c1fc8ecb8fdc196610754a82aa0e3464a/openhands-agent-server/openhands/agent_server/conversation_router.py), [event routes](https://github.com/OpenHands/software-agent-sdk/blob/c3985a4c1fc8ecb8fdc196610754a82aa0e3464a/openhands-agent-server/openhands/agent_server/event_router.py), and [page and sort models](https://github.com/OpenHands/software-agent-sdk/blob/c3985a4c1fc8ecb8fdc196610754a82aa0e3464a/openhands-agent-server/openhands/agent_server/models.py).
 - [SDK event timestamp definition](https://github.com/OpenHands/software-agent-sdk/blob/c3985a4c1fc8ecb8fdc196610754a82aa0e3464a/openhands-sdk/openhands/sdk/event/base.py).
 
