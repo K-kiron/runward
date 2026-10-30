@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "name": "runward",
+  "display_name": "Runward",
+  "version": "0.1.0",
+  "description": "Read-only timelines for OpenHands conversation events.",
+  "entrypoint": "extension.js",
+  "contributes": {
+    "pages": [
+      {
+        "id": "timeline",
+        "title": "Runward timeline",
+        "path": "/timeline",
+        "nav_label": "Runward"
+      }
+    ]
+  }
+}

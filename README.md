@@ -2,7 +2,7 @@
 
 A local operations desk for coding agents. See who is working, inspect parallel execution, track runs, and keep handoffs from getting lost.
 
-Runward runs on your machine with **Node.js 22+ and no runtime dependencies**. It serves a browser interface on loopback, stores live state locally, and makes no outbound requests. Demo data is synthetic and clearly labeled.
+The standalone Runward server runs on your machine with **Node.js 22+ and no runtime dependencies**. It serves a browser interface on loopback, stores live state locally, and makes no outbound requests. Demo data is synthetic and clearly labeled.
 
 ![Runward demo with agent activity lanes, run results, attention requests, and handoffs](docs/screenshot.png)
 
@@ -32,6 +32,12 @@ Live mode starts empty and persists to `~/.runward/state.json`. Use `--data` to 
 - Selected-file transcript import for Codex, Claude Code, DSH (DeepSeek Harness), OpenCode, OpenHands, and Gemini CLI, plus a provider-neutral event API.
 
 Claims are coordination records. They **do not launch agents, send prompts, approve tool calls, or execute terminal commands**. Console content is read only. Provider names identify incoming data, not an affiliation.
+
+## OpenHands Agent Canvas App
+
+The optional [Canvas App](apps/openhands/README.md) adds a read-only Runward page inside OpenHands Agent Canvas. Install it from this repository with **Repo path `apps/openhands`** and a revision containing the app. It reads the selected conversation through Canvas's authenticated Agent Server HTTP helper; it does not require a separate Runward server or a manually entered API key.
+
+The App targets the beta host API 1 on supported local backends. OpenHands Cloud backends are not supported. Timezone-naive events remain untimed unless you explicitly supply the server's fixed UTC offset. See the [installation, trust model, timing rules, and verification limits](apps/openhands/README.md).
 
 ## Connect actual sessions
 
