@@ -1846,3 +1846,55 @@ dialog input+p {
     scroll-behavior: auto!important
   }
 }
+
+.domain-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.inspector-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.inspector-provenance strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.identity-evidence {
+  flex-basis: 100%;
+}
+
+.dialog-actions {
+  flex-wrap: wrap;
+}
+
+@media(max-width:600px) {
+  .topbar-actions {
+    gap: 8px;
+  }
+  .topbar-actions button {
+    padding-inline: 10px;
+  }
+  .domain-notice {
+    gap: 4px;
+    flex-direction: column;
+    padding: 10px 12px;
+  }
+}

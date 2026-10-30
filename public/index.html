@@ -15,13 +15,14 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="Runward home"><svg aria-hidden="true" viewBox="0 0 28 28"><path d="M3 7h15l-4-4M3 14h22l-4-4M3 21h15l-4 4"/></svg><span>runward</span></a>
     <span class="topbar-label">Local agent operations</span>
-    <div class="topbar-actions"><span id="connection" class="connection" role="status">Connecting</span><button id="connect-button" type="button">Connect</button></div>
+    <div class="topbar-actions"><span id="connection" class="connection" role="status">Locked</span><button id="connect-button" type="button">Connect</button><button id="logout-button" type="button" hidden>Lock</button></div>
   </header>
   <main id="main" class="canvas">
     <div id="mode-notice" class="mode-notice" hidden></div>
+    <div id="domain-notice" class="domain-notice" aria-label="Authorized domain" hidden></div>
     <div id="error-notice" class="error-notice" role="alert" hidden></div>
     <div class="overview">
-      <div class="page-heading"><div><h1>Agent operations</h1><p id="finding">Waiting for your local event stream.</p></div><button id="refresh-button" class="text-button" type="button">Refresh</button></div>
+      <div class="page-heading"><div><h1>Agent operations</h1><p id="finding">Connect with a server token to read this domain’s activity.</p></div><button id="refresh-button" class="text-button" type="button" disabled>Refresh</button></div>
       <div id="summary" class="summary" aria-label="Workspace summary"></div>
       <form id="filters" class="filters" role="search">
         <div class="field search-field"><label class="sr-only" for="search">Search agents, providers, and projects</label><input id="search" type="search" placeholder="Search agents or projects" autocomplete="off"></div>
@@ -29,8 +30,8 @@
       </form>
       <section class="panel activity-panel" aria-labelledby="activity-heading">
         <div class="panel-heading"><h2 id="activity-heading">Activity lanes <span id="agent-count" class="count"></span></h2><div class="heading-tools"><label class="sr-only" for="window">Activity window</label><select id="window"><option value="15">Last 15 minutes</option><option value="60">Last hour</option><option value="all" selected>All recorded activity</option></select></div></div>
-        <div id="activity" class="activity"><p class="empty">Loading agent activity…</p></div>
-        <div class="panel-footer"><div id="activity-legend" class="legend"></div><span id="freshness" class="muted">Awaiting first snapshot</span></div>
+        <div id="activity" class="activity"><p class="empty">Activity is locked. No agent data is loaded before you connect.</p></div>
+        <div class="panel-footer"><div id="activity-legend" class="legend"></div><span id="freshness" class="muted">Connect to read activity</span></div>
       </section>
     </div>
     <section id="inspector" class="panel inspector" aria-labelledby="inspector-name" hidden></section>
@@ -42,19 +43,20 @@
         <section class="panel handoff-panel" aria-labelledby="handoffs-heading"><div class="panel-heading"><h2 id="handoffs-heading">Handoffs <span id="handoff-count" class="count"></span></h2><button id="toggle-completed" class="text-button" type="button" aria-pressed="false">Show completed</button></div><p class="section-note">Claims assign work. They do not start an agent.</p><div id="handoffs"><p class="empty">Loading handoffs…</p></div></section>
       </div>
     </div>
-    <footer class="page-footer"><span>Local first. Your workspace, in view.</span><span id="access-label">Read-only session</span></footer>
+    <footer class="page-footer"><span>Local first. Your workspace, in view.</span><span id="access-label">Locked · authentication required</span></footer>
   </main>
   <dialog id="connect-dialog" aria-labelledby="connect-title">
     <form id="connect-form">
       <div class="dialog-heading"><h2 id="connect-title">Connect to Runward</h2><button id="close-dialog" class="text-button" type="button" aria-label="Close connection dialog">Close</button></div>
-      <p>Read live activity without a token. Unlock coordination to claim handoffs and resolve requests.</p>
-      <label for="operator-name">Your operator name</label><input id="operator-name" name="operator" required maxlength="160" autocomplete="nickname" placeholder="e.g. sam">
-      <label for="access-token">Local server token</label><input id="access-token" name="token" type="password" required autocomplete="off" spellcheck="false" placeholder="Token from your server terminal">
-      <p class="muted">The token stays in this tab's memory and is cleared when you lock or reload.</p>
+      <p id="session-description">A server token is required to read activity. Reader tokens allow inspection; action tokens also allow coordination.</p>
+      <label for="operator-name">Operator alias <span class="muted">(optional for reading)</span></label><input id="operator-name" name="operator" maxlength="160" autocomplete="off" placeholder="e.g. sam" aria-describedby="operator-help">
+      <p id="operator-help" class="muted">Required for coordination. This is an entered label, not an authenticated identity.</p>
+      <label for="access-token">Server access token</label><input id="access-token" name="token" type="password" required autocomplete="off" spellcheck="false" placeholder="Reader or action token from your server terminal">
+      <p class="muted">The server token is exchanged for a temporary session, then forgotten. Only the session token stays in this tab’s memory. Lock clears activity and revokes that session.</p>
       <p id="connect-error" class="form-error" role="alert" hidden></p>
-      <div class="dialog-actions"><button id="unlock-button" class="primary" type="submit">Unlock coordination</button><button id="lock-button" type="button" hidden>Lock session</button></div>
+      <div class="dialog-actions"><button id="unlock-button" class="primary" type="submit">Connect securely</button><button id="save-operator" type="button" hidden>Save operator alias</button><button id="lock-button" type="button" hidden>Lock session</button></div>
     </form>
-    <details class="ingestion-help"><summary>Send activity from a local agent</summary><p>Use the command line from the project folder. The event API also accepts JSON commands at <code>POST /api/events</code> with a bearer token.</p><pre id="ingestion-command"></pre><p class="muted">Only import transcripts you intend to show in this dashboard. See the README for provider limits.</p></details>
+    <details class="ingestion-help"><summary>Send activity from a local agent</summary><p>Enroll explicit files using a domain/environment or a config file. The ingest command uses <code>RUNWARD_INGEST_TOKEN</code> for the enrolled source; the event API accepts that source token at <code>POST /api/events</code>.</p><pre id="ingestion-command"></pre><p class="muted">The example labels are operator assertions, not account verification. Only import transcripts intended for this domain. Keep tokens out of URLs and config files. See the README for enrollment and provider limits.</p></details>
   </dialog>
   <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
   <noscript><p class="noscript">Runward needs JavaScript to read the local event stream. Enable it and reload this page.</p></noscript>

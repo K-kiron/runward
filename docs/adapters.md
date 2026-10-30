@@ -1,8 +1,10 @@
 # Transcript adapters
 
-Runward polls only files explicitly supplied with `--watch`. It does not discover sessions, read credential files, change provider configuration, or attach to a running agent process. Original transcripts are never modified.
+Runward polls only files explicitly supplied with `--watch` or a source `path` in `--config`. Live mode requires a domain and environment. It does not discover sessions, read credential files, change provider configuration, or attach to a running agent process. Original transcripts are never modified. See [domain isolation and enrollment](isolation.md#explicit-source-configuration) before combining personal and company recordings.
 
-Each selected file receives a stable source identifier derived from its provider and absolute path. Its records are converted to one agent and timestamped spans. Moving the file creates a different source identity. Multiple selected files are separate agents; subagent relationships are not inferred across files. Provider names identify the development tool that wrote a recording, independently of which model it used.
+The `--watch` shorthand derives stable source/tool-instance identifiers from the provider and normalized selected path, uses generation 1, and records provider identity as unknown. The canonical target and file identity are persisted as the binding, so retargeting the same selected link cannot create a new source implicitly. Use `--config` for explicit source names, tool-instance labels, optional operator-asserted identity aliases, and reviewed generation changes. Its paths resolve relative to the config file. Changing an existing enrollment requires a new generation.
+
+Records are converted to one agent and timestamped spans per selected file, then namespaced by domain, environment, source and generation. Multiple selected files are separate agents; subagent relationships are not inferred across files. Provider names identify the development tool that wrote a recording, independently of which model it used. A current login, path, or project label does not establish historical account ownership.
 
 ## Recognized records
 
@@ -24,7 +26,7 @@ The readers follow common producer record shapes, not a version-negotiated integ
 
 ## Select or capture a recording
 
-All examples run from the Runward repository. Replace paths and session IDs with your own. Capturing a new agent run can execute its normal tools and use its configured model; Runward's file reader does neither. Watch the recording in another terminal while the producer appends to it.
+All examples run from the Runward repository. Replace domains, environments, paths and session IDs with reviewed values for your installation. Capturing a new agent run can execute its normal tools and use its configured model; Runward's file reader does neither. Create the recording before enrollment, then watch it in another terminal while the producer appends to it. A later rewrite or replacement requires explicit reenrollment, even for a supported export format.
 
 ### DSH (DeepSeek Harness)
 
@@ -33,18 +35,18 @@ Select the current `session.v4.jsonl.zstd` (or uncompressed `.jsonl`) in the ses
 The reader recognizes the format-4 header and sequenced events, compact assistant-stream fragments, explicit tool call/result pairs, and seed-history boundaries. A seeded log is deferred until its tagged boundary arrives; inherited history is excluded. A sequence gap stops the unverified suffix. Generated tool arguments alone do not establish that the tool executed.
 
 ```sh
-node cli.mjs --watch "dsh=/absolute/path/session.v4.jsonl.zstd"
+node cli.mjs --domain personal --environment laptop --watch "dsh=/absolute/path/session.v4.jsonl.zstd"
 ```
 
 ### OpenCode
 
-Export one session as JSON, then watch that export. For newer v2 installations, use `opencode session export SESSION_ID > session.json`; v1 installations use `opencode export SESSION_ID > session.json`. An export is a snapshot: export again to update the file.
+Export one session as JSON, then watch that unchanged export. For newer v2 installations, use `opencode session export SESSION_ID > session.json`; v1 installations use `opencode export SESSION_ID > session.json`. An export is a snapshot. To refresh it, produce and review a new export, then select it under a new source generation in `--config`; overwriting an enrolled export does not provide an append-only update stream.
 
 For an ongoing run, capture its JSON output instead. Reasoning output needs `--thinking` where supported:
 
 ```sh
 opencode run --format json --thinking "YOUR TASK" > opencode-events.jsonl
-node cli.mjs --watch "opencode=/absolute/path/opencode-events.jsonl"
+node cli.mjs --domain personal --environment laptop --watch "opencode=/absolute/path/opencode-events.jsonl"
 ```
 
 Both v1 nested message/part exports and v2 flat-message exports are supported. Current v2 exports omit unsettled assistant messages upstream; use the live JSONL capture to observe those. Explicit tool part times are preserved; missing timing becomes an observation instant. A completed step is not proof that the whole session is idle or that verification passed.
@@ -55,7 +57,7 @@ Use the headless CLI JSON callback stream. OpenHands headless mode auto-approves
 
 ```sh
 openhands --headless --json -t "YOUR TASK" | node examples/capture-openhands.mjs > openhands-events.jsonl
-node cli.mjs --watch "openhands=/absolute/path/openhands-events.jsonl"
+node cli.mjs --domain personal --environment laptop --watch "openhands=/absolute/path/openhands-events.jsonl"
 ```
 
 Offset-bearing producer timestamps take precedence. When only receipt timestamps are available, intervals describe when events were observed. Existing timezone-naive logs without a capture time are skipped with a warning; Runward does not guess their timezone. SDK event JSON files can also be selected individually. Native SDK event directories and ZIP files are not watched recursively.
@@ -65,7 +67,7 @@ Offset-bearing producer timestamps take precedence. When only receipt timestamps
 Select a `session-*.jsonl` chat recording under `~/.gemini/tmp/<project>/chats/`; older `session-*.json` conversation snapshots are also accepted. No model call or configuration change is needed to read an existing recording.
 
 ```sh
-node cli.mjs --watch "gemini=/absolute/path/session-example.jsonl"
+node cli.mjs --domain personal --environment laptop --watch "gemini=/absolute/path/session-example.jsonl"
 ```
 
 Gemini's append-only message replacements, `$set`, `$patch`, and `$rewindTo` are folded in file order before conversion. Tool IDs are scoped to their message, because call IDs can be reused in later turns. Thought summaries remain instants; a snapshot with only one tool timestamp does not establish a duration. Session completion and verification success are not inferred from a final assistant message.
@@ -82,15 +84,21 @@ Gemini's append-only message replacements, `$set`, `$patch`, and `$rewindTo` are
 
 ## Polling and persistence
 
-Files are checked every two seconds and reparsed when file identity, size, or modification time changes. Only new or changed commands are dispatched; unsupported or incomplete appended rows do not rewrite unchanged history. Successfully committed batches are acknowledged individually so a retry does not replay them. Imports commit in batches of at most 1,000 commands; a very large import can appear over several state revisions.
+Files are checked every two seconds using pathname/link, canonical-path and open-file identity checks before and after reading. Previously read bytes must remain unchanged: replacement, symlink/junction retargeting, disappearance, truncation, or an earlier-byte rewrite pauses the source until reviewed reenrollment with a new generation. Normal append growth is allowed. Content fingerprints avoid reparsing unchanged bytes; only new or changed commands are dispatched. Unsupported or incomplete appended rows do not rewrite unchanged history. Successfully committed batches are acknowledged individually so a retry does not replay them. Imports commit in batches of at most 1,000 commands; a very large import can appear over several state revisions.
+
+The guard applies to legitimate producer changes too. JSON exports or conversation snapshots that are rewritten or atomically replaced require a reviewed new generation; parser support does not promise append-only producer behavior. Repeated source generations preserve their separate history until purged. The byte-prefix hash is process-local: an offline same-inode rewrite while Runward is stopped is not detected on restart. Persisted file identity detects replacement, but does not authenticate content or account identity. See [file lifecycle and limitations](isolation.md#source-enrollment-and-file-lifecycle).
 
 UTF-8 recordings and BOM-marked UTF-16 exports from Windows shell redirection are supported. Runward decodes in memory and preserves the original file encoding.
 
-Files larger than 32 MiB are rejected with a warning. Compressed inputs also have a 32 MiB decompressed limit and a 100,000-frame limit. Zstandard requires Node.js 22.15+ with native Zstandard support. A partial compressed frame is retried without overwriting previously imported state. For larger histories, send selected events through the API or make a separately labeled trimmed copy. No automatic archive discovery or recursive directory watch is performed. Previously imported records remain in bounded state when a file is removed, truncated, or rewound by the producer; absence is not treated as a deletion command. Use a fresh state file to rebuild only the producer's current visible history.
+Files larger than 32 MiB are rejected; an oversized file selected at startup cannot be enrolled. Compressed inputs also have a 32 MiB decompressed limit and a 100,000-frame limit. Zstandard requires Node.js 22.15+ with native Zstandard support. A partial compressed frame is retried without overwriting previously imported state. For larger histories, send selected events through a source-bound [ingest capability](events.md), or make a separately labeled trimmed copy and enroll it explicitly. No automatic archive discovery or recursive directory watch is performed.
+
+Previously imported records remain in the domain store when collection stops, a file disappears, or an append-only producer record rewinds its visible history; absence is not a deletion command. The store has fixed record limits and an 8 MiB size limit. Use an action capability to [purge a source](isolation.md#purge-and-retention) when its stored history must be removed. Purge revokes all enrolled generations for that source, rejects their replay, and leaves original transcripts and backups untouched. Removing a source from config only stops collection after restart.
 
 ## Upgrading an existing import
 
-The completed-item reader uses a unified identity for Codex response and completed-item records. If you imported Codex logs with version 0.1.0, retain the old state as a backup and select a **new state file** with `--data` when reimporting. This avoids retaining old event IDs or inherited parent-history records alongside the corrected events. Runward does not delete old state automatically. Manually created runs, handoffs, and attention items remain in the old state file and are not copied to the new one.
+Existing version-1 stores require [explicit migration](isolation.md#legacy-migration) of reviewed agent IDs into a fresh domain store, or a fresh reimport of selected recordings. The old default state is not opened automatically. Migration preserves selected historical content and does not repair parser decisions in that history.
+
+The completed-item reader uses a unified identity for Codex response and completed-item records. For imports originally created by Runward 0.1.0, retain the old store as a backup and reimport reviewed logs into a **new state file** with `--data`, plus `--domain` and `--environment` or `--config`. This avoids retaining old event IDs or inherited parent-history records alongside corrected events. Runward does not delete old state automatically. Manually created runs, handoffs, and attention items remain in the old store unless explicitly selected through migration.
 
 Parser coverage was checked locally against sessions written by Codex `0.163.0-alpha.10.2`, including forked agents and an actively appended conversation. Public tests use synthetic records under `test/`; no real transcripts are distributed. This does not establish compatibility with every producer version. Claude coverage remains based on synthetic fixtures.
 

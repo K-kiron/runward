@@ -14,13 +14,15 @@ cd runward
 npm run demo
 ```
 
-Open **http://127.0.0.1:4317**. The terminal prints a temporary write token; enter it in the dashboard to claim handoffs or resolve attention items. Read-only inspection requires no token. Demo changes stay in memory and reset on restart.
+Open **http://127.0.0.1:4317** and select **Connect**. The terminal prints separate read and action tokens. Use the read token to inspect activity, or the action token to coordinate handoffs and resolve attention items. Both require authentication. An operator alias is required only for coordination; it is an entered label, not an authenticated identity. Demo changes stay in memory and reset on restart.
+
+For an empty live domain:
 
 ```sh
-npm start
+npm start -- --domain personal --environment laptop
 ```
 
-Live mode starts empty and persists to `~/.runward/state.json`. Use `--data` to select another file and `--port` to change the port. Keep one server per state file.
+Live mode requires an explicit domain/environment or a config file. It persists to `~/.runward/domains/personal/laptop/state.json` in this example. Use `--data` to select another file and `--port` to change the port. Keep one process and state file per domain/environment. The old `~/.runward/state.json` is preserved and never loaded implicitly; see [migration and isolation](docs/isolation.md).
 
 ## What it does
 
@@ -41,34 +43,63 @@ The App targets the beta host API 1 on supported local backends. OpenHands Cloud
 
 ## Connect actual sessions
 
-Choose specific transcript files; Runward never scans your home directory or edits provider settings.
+Choose specific transcript files for one data-access domain; Runward never scans your home directory, discovers provider logins, or edits provider settings.
 
 ```sh
-node cli.mjs --watch "claude=/absolute/path/session.jsonl" --watch "codex=/absolute/path/rollout.jsonl"
-node cli.mjs --watch "dsh=/absolute/path/session.v4.jsonl.zstd"
-node cli.mjs --watch "opencode=/absolute/path/session.json"
-node cli.mjs --watch "openhands=/absolute/path/events.jsonl"
-node cli.mjs --watch "gemini=/absolute/path/session.jsonl"
+node cli.mjs --domain personal --environment laptop --watch "codex=/absolute/path/rollout.jsonl"
+node cli.mjs --domain company --environment work-vm --port 4318 --watch "claude=/absolute/path/session.jsonl"
 ```
 
-On Windows, pass paths such as `--watch "codex=C:\work\logs\rollout.jsonl"`. Combine `--watch` options to view different tools together. Selected files are polled every two seconds. DSH Zstandard logs require Node.js 22.15+ with Zstandard support. See [adapter coverage and capture commands](docs/adapters.md) to select the correct export format; OpenHands logs without timezone offsets need the supplied capture helper.
+These are separate processes with separate stores and credentials. Run each in its intended environment. Different ports on one computer do not create an OS security boundary. Combine `--watch` options only for sources that may share all raw data with the same readers.
+
+For explicit source names, identity assertions, and generation changes, save a config such as `personal.json`:
+
+```json
+{
+  "domain": { "id": "personal", "environmentId": "laptop" },
+  "sources": [
+    {
+      "id": "editor-session",
+      "provider": "codex",
+      "toolInstanceId": "cli-profile-a",
+      "generation": 1,
+      "identity": "identity-a",
+      "path": "./logs/rollout.jsonl"
+    }
+  ]
+}
+```
+
+```sh
+node cli.mjs --config personal.json
+```
+
+Paths resolve relative to the config file. Identity aliases are optional, opaque operator assertions; omitted identities remain unknown. A project name, config directory, or alias does not prove which account produced a record. Runward generates file bindings itself; do not copy `fileIdentity` into a config by hand.
+
+Selected files are polled every two seconds. While running, replacement, truncation, link retargeting, or rewriting previously read bytes pauses the source. This also affects legitimate exports rewritten in place: use a reviewed new generation. Across restarts, file identity is checked, but a same-inode content rewrite made while stopped is not detected by the process-local append guard. See [source lifecycle and limits](docs/isolation.md#source-enrollment-and-file-lifecycle).
+
+The six readers support Codex, Claude Code, DSH, OpenCode, OpenHands, and Gemini CLI. DSH Zstandard logs require Node.js 22.15+ with Zstandard support. See [adapter coverage and capture commands](docs/adapters.md) for supported formats and timing limits.
 
 For your own agent or runner, submit explicit events using [the event API](docs/events.md):
 
 ```sh
-# Set RUNWARD_TOKEN in this shell to the running server's token first.
+# Supply the enrolled source's token through RUNWARD_INGEST_TOKEN first.
 node cli.mjs ingest examples/events.json
 ```
 
-An environment-provided `RUNWARD_TOKEN` lets a server retain its write token across restarts. The UI holds it only in memory and forgets it on Lock or page reload. Never put tokens in URLs, commits, or screenshots.
+Read, action, and source-ingest tokens are separate capabilities. `RUNWARD_READ_TOKEN` and `RUNWARD_TOKEN` can reuse previously issued, matching read and action tokens at startup. `RUNWARD_INGEST_TOKEN` is used by the ingest command and must match an enrolled source/generation. Tokens are bound to their domain/environment and role; ingestion is additionally source-bound. Never put them in URLs, config files, commits, or screenshots.
+
+The browser exchanges a read/action root token for a revocable session lasting at most eight hours, then forgets the root token. It keeps only that session in tab memory, with no credential cookies or browser storage. **Lock** clears loaded activity, filters, inspector content and pending responses, closes the stream, and requests session revocation.
 
 ## Data and trust
 
-Runward binds only to `127.0.0.1`. Host and browser-origin checks reject foreign sites; mutations require a token. **Read access is available to local processes and same-machine browser tabs.** This is a single-user local tool, not a multi-user authorization system or a public server.
+Runward binds only to `127.0.0.1`. Host and browser-origin checks reject foreign sites. All data reads, including snapshots and SSE, require bearer authorization; only the non-sensitive health response is public. A read token grants the entire domain's snapshot. Project/provider filters organize that authorized data and are not access controls.
 
-Transcript text, tool arguments, and tool results can contain secrets. Runward does not redact them automatically. Import only files you intend to view, protect the state file, and do not expose this server through a public tunnel. It uses no telemetry, CDN, external fonts, or hosted API.
+Separate authenticated domain instances implement the P0 isolation boundary described in [issue #3](https://github.com/K-kiron/runward/issues/3). The P1 combined metadata overview has **not** shipped. There is no shared multi-domain raw-data viewer or provider credential broker. See the [isolation guide](docs/isolation.md) for deployment, token roles, explicit migration, purge, and provider scenarios.
 
-State writes are serialized and replaced atomically after flushing the temporary file. Invalid batches do not partially apply; a corrupt saved file stops startup instead of being overwritten. Retention is bounded; see [events and limits](docs/events.md). Back up the state file for longer history.
+Transcript text, tool arguments, and tool results can contain secrets. Runward does not redact or application-encrypt them. An unrestricted process running as the same OS user, an administrator, or a compromised trusted browser can still access data or credentials. Strong personal/company isolation needs enforced OS-user, sandbox, or VM boundaries and appropriate file permissions. Runward does not automatically change Windows ACLs. It makes no outbound requests, uses no telemetry, CDN, external fonts, or hosted API, and should not be exposed through a public tunnel.
+
+State writes are serialized and replaced atomically after flushing the temporary file. A canonical state-file lock prevents concurrent writers. Invalid batches do not partially apply; corrupt, mismatched, or unmigrated legacy state stops startup instead of being overwritten. Persisted domain stores are limited to 8 MiB, with bounded record retention. Removing a watcher does not delete history: use an explicit [source purge](docs/isolation.md#purge-and-retention). Original transcripts and backups remain outside that purge.
 
 ## Scope and provenance
 
@@ -83,6 +114,6 @@ npm test
 npm run check
 ```
 
-Tests cover state validation, concurrent claims, persistence failures, local request boundaries, live event delivery, and synthetic transcript parsing. The CI matrix runs on Windows and Linux with Node.js 22 and 24.
+Tests cover state validation, domain/source namespaces, token roles, browser session races and revocation, migration and purge, file enrollment, concurrent claims, persistence failures, streaming, and synthetic transcript parsing. The CI matrix runs on Windows and Linux with Node.js 22 and 24. Synthetic isolation tests do not certify provider login behavior or a deployed machine's OS permissions.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).
