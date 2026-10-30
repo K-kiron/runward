@@ -1,18 +1,20 @@
+import { createConnection } from './connection.mjs';
+
 const $ = (selector) => document.querySelector(selector);
 const kinds = ['thinking', 'tool', 'subagent', 'error', 'message'];
 const state = {
-  snapshot: null, token: '', owner: '', selectedAgent: null, selectedSpan: null,
+  snapshot: null, access: null, owner: '', selectedAgent: null, selectedSpan: null,
   tab: 'waterfall', expanded: false, allRuns: false, completed: false,
   search: '', project: '', provider: '', status: '', window: 'all',
-  connected: false, receivedAt: 0, clockOffset: 0, pending: false,
+  connected: false, phase: 'locked', receivedAt: 0, clockOffset: 0, pending: false,
 };
-let stream;
+let loginAttempt = 0;
 let previousScroll = 0;
 const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const shortTimeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
 const numberFormat = new Intl.NumberFormat(undefined);
 const moneyFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
-const ingestionCommand = 'node cli.mjs --watch "codex=/path/to/session.jsonl"\nnode cli.mjs --watch "claude=/path/to/session.jsonl"\nnode cli.mjs --watch "dsh=/path/to/session.v4.jsonl.zstd"\nnode cli.mjs --watch "opencode=/path/to/session.json"\nnode cli.mjs --watch "openhands=/path/to/events.jsonl"\nnode cli.mjs --watch "gemini=/path/to/session.jsonl"\nnode cli.mjs ingest /path/to/events.json';
+const ingestionCommand = 'node cli.mjs --domain personal --environment laptop --watch "codex=/path/to/session.jsonl"\nnode cli.mjs --config /path/to/domain.json\nnode cli.mjs ingest /path/to/events.json';
 
 function node(tag, className, text, attributes = {}) {
   const element = document.createElement(tag);
@@ -71,7 +73,7 @@ function announce(message) { $('#announcement').textContent = message; }
 function connection(connected) {
   state.connected = connected;
   const target = $('#connection');
-  target.textContent = connected ? 'Live stream' : state.snapshot ? 'Reconnecting' : 'Connecting';
+  target.textContent = state.phase === 'locked' ? 'Locked' : connected ? 'Live stream' : state.snapshot ? 'Reconnecting' : 'Connecting';
   target.className = `connection ${connected ? 'connected' : 'disconnected'}`;
 }
 function showError(message) {
@@ -81,46 +83,27 @@ function showError(message) {
   if (message) append(container, node('span', '', message), button('Retry', 'refresh', '', 'text-button'));
 }
 function setSnapshot(snapshot) {
+  if (snapshot === null) { clearActivity(); return; }
   if (!snapshot || !Array.isArray(snapshot.agents) || !Array.isArray(snapshot.events) || !Array.isArray(snapshot.runs) || !Array.isArray(snapshot.handoffs) || !Array.isArray(snapshot.attention)) {
     showError('The server returned an invalid snapshot. Existing data has been kept.');
     return;
   }
-  // A restarted demo may reset its revision, so compare only within one server launch.
-  if (state.snapshot && snapshot.instanceId === state.snapshot.instanceId && snapshot.revision < state.snapshot.revision) return;
   state.snapshot = snapshot;
   state.receivedAt = Date.now();
   state.clockOffset = (timestamp(snapshot.serverTime) ?? Date.now()) - Date.now();
   showError('');
   render();
 }
-async function request(path, options = {}) {
-  const response = await fetch(path, { cache: 'no-store', ...options });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(body.error || `Request failed (${response.status}).`);
-    error.status = response.status;
-    throw error;
-  }
-  return body;
-}
 async function refresh() {
+  if (!state.access) { openConnection(); return; }
+  const access = state.access;
   const trigger = $('#refresh-button');
   trigger.disabled = true;
-  try { setSnapshot(await request('/api/state')); }
-  catch (error) { showError(`Could not refresh activity. ${error.message}${state.receivedAt ? ` Last received ${clock(state.receivedAt)}.` : ''}`); }
-  finally { trigger.disabled = false; }
-}
-function startStream() {
-  stream = new EventSource('/api/stream');
-  stream.addEventListener('open', () => connection(true));
-  stream.addEventListener('state', (event) => {
-    try { setSnapshot(JSON.parse(event.data)); connection(true); }
-    catch { showError('Could not read an event update. Existing data has been kept.'); }
-  });
-  stream.addEventListener('error', () => { connection(false); renderFreshness(); });
+  try { await transport.refresh(); }
+  finally { if (state.access === access) trigger.disabled = false; }
 }
 function renderFreshness() {
-  $('#freshness').textContent = state.receivedAt ? `${state.connected ? 'Updated' : 'Last received'} ${clock(state.receivedAt)} · local time${state.connected ? '' : ' · reconnecting automatically'}` : 'Awaiting first snapshot';
+  $('#freshness').textContent = state.receivedAt ? `${state.connected ? 'Updated' : 'Last received'} ${clock(state.receivedAt)} · local time${state.connected ? '' : ' · reconnecting automatically'}` : state.access ? 'Awaiting first authorized snapshot' : 'Connect to read activity';
 }
 function updateOptions(selector, values, allLabel, selected) {
   const select = $(selector);
@@ -268,8 +251,8 @@ function detailDisclosure(text, key) {
 }
 function actionButton(text, action, id) {
   const result = button(text, action, id);
-  result.disabled = state.pending;
-  if (!state.token) result.setAttribute('title', 'Unlock coordination to perform this action');
+  result.disabled = state.pending || !state.access?.writable;
+  if (!state.access?.writable) result.setAttribute('title', 'This session has read-only access');
   return result;
 }
 function renderQueues(data) {
@@ -289,7 +272,7 @@ function renderQueues(data) {
   for (const item of handoffs) {
     const actions = node('div', 'queue-actions');
     if (item.status === 'offered') actions.append(actionButton('Claim', 'claim', item.id));
-    else if (item.status === 'claimed' && (!state.token || item.owner === state.owner)) append(actions, actionButton('Release', 'release', item.id), actionButton('Complete', 'complete', item.id));
+    else if (item.status === 'claimed' && (!state.owner || item.owner === state.owner)) append(actions, actionButton('Release', 'release', item.id), actionButton('Complete', 'complete', item.id));
     const label = item.status === 'claimed' ? `Claimed by ${item.owner}` : capitalize(item.status);
     list.append(append(node('article', 'queue-item'), append(node('div', 'queue-top'), node('h3', 'queue-title', item.title), actions), queueMeta(item, label, 'handoff'), detailDisclosure(item.detail, `handoff:${item.id}`)));
   }
@@ -371,6 +354,18 @@ function renderInspector() {
   const context = agent.contextUsed === null ? '—' : `${numberFormat.format(agent.contextUsed)}${agent.contextLimit === null ? ' tokens' : ` / ${numberFormat.format(agent.contextLimit)} tokens`}`;
   for (const [label, value] of [['Started', dateTime(agent.startedAt)], ['Last seen', age(agent.lastSeen)], ['Context', context]]) facts.append(append(node('span', ''), node('span', '', `${label} `), node('strong', '', value)));
   identity.append(facts);
+  const source = state.snapshot.provenance?.[agent.id];
+  const provenance = node('div', 'inspector-provenance', null, { 'aria-label': 'Source enrollment' });
+  if (source) {
+    for (const [label, value] of [['Source', source.sourceId], ['Tool instance', source.toolInstanceId], ['Generation', source.generation]]) {
+      provenance.append(append(node('span', ''), node('span', '', `${label}: `), node('strong', '', value)));
+    }
+  }
+  const asserted = source?.identity?.evidence === 'operator-asserted' && typeof source.identity.alias === 'string';
+  provenance.append(node('span', 'identity-evidence', asserted
+    ? `Operator-supplied identity: ${source.identity.alias} · unverified`
+    : 'Identity unverified · no operator alias supplied'));
+  identity.append(provenance);
   append(header, identity, append(node('div', 'inspector-actions'), button(state.expanded ? 'Back to overview' : 'Expand', 'expand', '', 'text-button'), button('Close', 'close-inspector', '', 'text-button')));
   const tabs = node('div', 'tabs', null, { role: 'tablist', 'aria-label': 'Agent inspection' });
   for (const tab of ['waterfall', 'console', 'timeline']) {
@@ -388,10 +383,43 @@ function renderOnboarding() {
   const target = $('#onboarding');
   target.hidden = state.snapshot.mode !== 'live' || state.snapshot.agents.length > 0;
   if (target.hidden) return;
-  target.replaceChildren(node('h2', '', 'Bring an agent into view'), node('p', '', 'Start the server with a local transcript to watch, or send structured events from your own integration. Runward observes activity; it does not execute agents.'), node('pre', '', ingestionCommand), node('p', '', 'The ingest command requires RUNWARD_TOKEN in your environment. Event API: POST /api/events with an Authorization: Bearer token and a JSON command such as {"type":"agent.upsert","data":{"id":"build-worker","name":"Build worker","project":"My project","provider":"Custom","status":"working"}}.'), button('Connection details', 'connect', ''));
+  target.replaceChildren(node('h2', '', 'Bring an agent into view'), node('p', '', 'Enroll an explicit transcript file in this domain, or send structured events with its source token. Runward observes activity; it does not execute agents. The example domain and environment labels do not authenticate a provider account.'), node('pre', '', ingestionCommand), node('p', '', 'The ingest command requires RUNWARD_INGEST_TOKEN for an enrolled source. Event API: POST /api/events with that source’s Authorization: Bearer token and a JSON command such as {"type":"agent.upsert","data":{"id":"build-worker","name":"Build worker","project":"My project","provider":"Custom","status":"working"}}. Reader and action tokens cannot ingest events.'), button('Connection details', 'connect', ''));
 }
 function render() {
-  if (!state.snapshot) return;
+  $('#connect-button').textContent = state.access ? 'Session' : 'Connect';
+  $('#logout-button').hidden = !state.access && state.phase !== 'connecting';
+  $('#lock-button').hidden = !state.access;
+  $('#save-operator').hidden = !state.access?.writable;
+  $('#access-label').textContent = !state.access ? 'Locked · authentication required' : state.access.writable
+    ? `Read and coordinate${state.owner ? ` · alias: ${state.owner}` : ' · no operator alias'}` : 'Read-only access';
+  const domain = $('#domain-notice');
+  domain.hidden = !state.access;
+  domain.replaceChildren();
+  if (state.access) append(domain, node('span', '', `Domain: ${state.access.domain.id}`), node('span', '', `Environment: ${state.access.domain.environmentId}`));
+  $('#refresh-button').disabled = !state.access;
+  for (const control of document.querySelectorAll('#filters input, #filters select, #filters button, #window')) control.disabled = !state.access;
+  if (!state.snapshot) {
+    $('#finding').textContent = state.access ? 'Waiting for authorized activity from this domain.' : 'Connect with a server token to read this domain’s activity.';
+    $('#summary').replaceChildren();
+    $('#mode-notice').hidden = true;
+    $('#mode-notice').replaceChildren();
+    $('#onboarding').hidden = true;
+    $('#onboarding').replaceChildren();
+    $('#activity').replaceChildren(empty(state.access ? 'Loading authorized activity…' : 'Activity is locked. No agent data is loaded before you connect.'));
+    for (const id of ['runs', 'attention', 'handoffs']) $(`#${id}`).replaceChildren(empty(state.access ? 'Loading…' : 'Connect to read this domain.'));
+    for (const id of ['agent-count', 'run-count', 'attention-count', 'handoff-count', 'activity-legend']) $(`#${id}`).replaceChildren();
+    $('#toggle-runs').hidden = true;
+    $('#toggle-runs').textContent = 'View all';
+    $('#toggle-completed').disabled = true;
+    $('#toggle-completed').textContent = 'Show completed';
+    $('#toggle-completed').setAttribute('aria-pressed', 'false');
+    $('#clear-filters').hidden = true;
+    updateOptions('#project', [], 'All projects', '');
+    updateOptions('#provider', [], 'All providers', '');
+    renderInspector(); renderFreshness();
+    return;
+  }
+  $('#toggle-completed').disabled = false;
   const focusKey = document.activeElement?.dataset?.focus;
   const focusId = document.activeElement?.id;
   const inspectionScroll = ['.console', '.timeline-list', '.span-detail pre'].map((selector) => [selector, $(selector)?.scrollTop ?? 0]);
@@ -404,8 +432,6 @@ function render() {
   mode.hidden = state.snapshot.mode !== 'demo';
   if (!mode.hidden) mode.replaceChildren(node('strong', '', 'Demo workspace'), node('span', '', 'Fictional agents and activity. Start without --demo to connect your own workspace.'));
   renderSummary(data); renderActivity(data); renderRuns(data); renderQueues(data); renderInspector(); renderOnboarding(); renderFreshness();
-  $('#connect-button').textContent = state.token ? 'Connection' : 'Connect';
-  $('#access-label').textContent = state.token ? `Coordination unlocked · ${state.owner}` : 'Read-only session';
   for (const details of document.querySelectorAll('.queue-item details')) if (openDetails.has(details.dataset.details)) details.open = true;
   for (const [selector, scrollTop] of inspectionScroll) if ($(selector)) $(selector).scrollTop = scrollTop;
   const focused = focusKey ? [...document.querySelectorAll('[data-focus]')].find((element) => element.dataset.focus === focusKey) : focusId ? document.getElementById(focusId) : null;
@@ -415,32 +441,69 @@ function openConnection() {
   $('#operator-name').value = state.owner;
   $('#access-token').value = '';
   $('#connect-error').hidden = true;
-  $('#lock-button').hidden = !state.token;
+  $('#lock-button').hidden = !state.access;
+  $('#save-operator').hidden = !state.access?.writable;
+  $('#session-description').textContent = state.access
+    ? `Connected to domain ${state.access.domain.id}, environment ${state.access.domain.environmentId}. Enter a server token to replace this session.`
+    : 'A server token is required to read activity. Reader tokens allow inspection; action tokens also allow coordination.';
   $('#ingestion-command').textContent = ingestionCommand;
-  $('#connect-dialog').showModal();
-  (state.owner ? $('#access-token') : $('#operator-name')).focus();
+  if (!$('#connect-dialog').open) $('#connect-dialog').showModal();
+  $('#access-token').focus();
+}
+function clearActivity() {
+  state.snapshot = null; state.owner = ''; state.selectedAgent = null; state.selectedSpan = null;
+  state.expanded = false; state.allRuns = false; state.completed = false; state.pending = false;
+  state.receivedAt = 0; state.clockOffset = 0; previousScroll = 0;
+  for (const key of ['search', 'project', 'provider', 'status']) { state[key] = ''; $(`#${key}`).value = ''; }
+  state.window = 'all'; $('#window').value = 'all';
+  $('#operator-name').value = ''; $('#access-token').value = '';
+  $('#session-description').textContent = 'A server token is required to read activity. Reader tokens allow inspection; action tokens also allow coordination.';
+  $('#announcement').textContent = ''; $('#connect-error').textContent = ''; $('#connect-error').hidden = true;
+  showError(''); render();
 }
 function lock() {
-  state.token = ''; state.owner = ''; $('#access-token').value = ''; $('#operator-name').value = '';
-  $('#connect-dialog').close(); render(); announce('Coordination locked.');
+  loginAttempt++;
+  transport.logout();
+  $('#unlock-button').disabled = false; $('#unlock-button').textContent = 'Connect securely';
+  $('#connect-dialog').close(); announce('Session locked. Activity and session credentials cleared.');
 }
 async function coordinate(action, id) {
-  if (!state.token) { openConnection(); return; }
+  if (!state.access?.writable) { openConnection(); return; }
+  if (!state.owner) {
+    openConnection();
+    $('#connect-error').textContent = 'Enter and save an operator alias before coordinating. This label is not an authenticated identity.';
+    $('#connect-error').hidden = false;
+    $('#operator-name').focus();
+    return;
+  }
   if (state.pending) return;
+  const access = state.access;
   const type = action === 'resolve' ? 'attention.resolve' : `handoff.${action}`;
   const data = action === 'resolve' ? { id } : { id, owner: state.owner };
   state.pending = true; render();
   try {
-    await request('/api/actions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` }, body: JSON.stringify({ type, data }) });
+    if (!await transport.action({ type, data }) || state.access !== access) return;
     await refresh();
+    if (state.access !== access) return;
     announce(action === 'resolve' ? 'Attention request resolved.' : `Handoff ${action === 'claim' ? 'claimed. This assigns the work; no agent was started.' : action === 'release' ? 'released.' : 'completed.'}`);
   } catch (error) {
-    if (error.status === 401 || error.status === 403) { state.token = ''; $('#access-token').value = ''; }
+    if (state.access !== access) return;
     if (error.status === 409) await refresh();
+    if (state.access !== access) return;
     showError(error.message);
     announce(error.message);
-  } finally { state.pending = false; render(); }
+  } finally { if (state.access === access) { state.pending = false; render(); } }
 }
+
+const transport = createConnection({
+  onState: setSnapshot,
+  onAccess: (access) => { state.access = access; render(); },
+  onStatus: ({ phase, message }) => {
+    state.phase = phase;
+    connection(phase === 'live');
+    showError(message); render();
+  },
+});
 
 $('#filters').addEventListener('submit', (event) => event.preventDefault());
 $('#search').addEventListener('input', (event) => { state.search = event.target.value.trim(); render(); });
@@ -452,29 +515,41 @@ $('#connect-button').addEventListener('click', openConnection);
 $('#close-dialog').addEventListener('click', () => $('#connect-dialog').close());
 $('#connect-dialog').addEventListener('close', () => { $('#access-token').value = ''; });
 $('#lock-button').addEventListener('click', lock);
+$('#logout-button').addEventListener('click', lock);
+$('#save-operator').addEventListener('click', () => {
+  if (!state.access?.writable) return;
+  const owner = $('#operator-name').value.trim();
+  if (!owner) { $('#operator-name').focus(); return; }
+  state.owner = owner;
+  $('#connect-dialog').close(); render(); announce('Operator alias saved for this session. It is not an authenticated identity.');
+});
 $('#toggle-runs').addEventListener('click', () => { state.allRuns = !state.allRuns; render(); });
 $('#toggle-completed').addEventListener('click', () => { state.completed = !state.completed; render(); });
 $('#connect-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const token = $('#access-token').value.trim();
+  let token = $('#access-token').value.trim();
   const owner = $('#operator-name').value.trim();
-  if (!token || !owner) return;
-  const unlock = $('#unlock-button'); unlock.disabled = true; unlock.textContent = 'Verifying…';
+  if (!token) return;
+  const attempt = ++loginAttempt;
+  $('#access-token').value = '';
+  const unlock = $('#unlock-button'); unlock.disabled = true; unlock.textContent = 'Connecting…';
   const error = $('#connect-error'); error.hidden = true;
   try {
-    const result = await request('/api/session', { headers: { Authorization: `Bearer ${token}` } });
-    if (!result.writable) throw new Error('The token did not unlock coordination. Check the token in your server terminal.');
-    state.token = token; state.owner = owner; $('#access-token').value = '';
-    $('#connect-dialog').close(); render(); announce(`Coordination unlocked for ${owner}.`);
-  } catch (reason) { error.textContent = reason.message; error.hidden = false; }
-  finally { unlock.disabled = false; unlock.textContent = 'Unlock coordination'; }
+    const connecting = transport.login(token);
+    token = '';
+    const result = await connecting;
+    if (!result || attempt !== loginAttempt || state.access !== result) return;
+    state.owner = result.writable ? owner : '';
+    $('#connect-dialog').close(); render(); announce(result.writable ? 'Connected with read and coordination access.' : 'Connected with read-only access.');
+  } catch (reason) { if (attempt === loginAttempt) { error.textContent = reason.message; error.hidden = false; } }
+  finally { token = ''; if (attempt === loginAttempt) { unlock.disabled = false; unlock.textContent = 'Connect securely'; } }
 });
 document.addEventListener('click', (event) => {
   const control = event.target.closest('[data-action]');
   if (!control || control.disabled) return;
   const { action, id } = control.dataset;
   if (action === 'select-agent') selectAgent(id);
-  else if (action === 'select-span') { const span = state.snapshot.events.find((item) => item.id === id); if (span) selectAgent(span.agentId, span.id); }
+  else if (action === 'select-span') { const span = state.snapshot?.events.find((item) => item.id === id); if (span) selectAgent(span.agentId, span.id); }
   else if (action === 'timeline-span') { state.selectedSpan = id; state.tab = 'waterfall'; renderInspector(); $('#tab-waterfall').focus(); }
   else if (action === 'tab') { state.tab = id; renderInspector(); $(`#tab-${id}`).focus(); }
   else if (action === 'expand') { state.expanded = !state.expanded; render(); $('#inspector').scrollIntoView({ block: 'start', behavior: 'instant' }); }
@@ -494,7 +569,6 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.key === 'Escape' && state.selectedAgent && !$('#connect-dialog').open) closeInspector();
 });
-window.addEventListener('pagehide', () => { stream?.close(); state.token = ''; });
+window.addEventListener('pagehide', lock);
 setInterval(() => { if (state.snapshot && !document.hidden && !$('#connect-dialog').open) render(); }, 15_000);
-refresh();
-startStream();
+render();
