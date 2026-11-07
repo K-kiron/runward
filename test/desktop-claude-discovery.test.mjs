@@ -300,6 +300,58 @@ test('Claude tail freshness revokes inherited cwd after foreign requests and mes
     'an explicit allowed cwd restores matching-session scope');
 });
 
+test('truncated Claude freshness tails do not restore scope after foreign evidence leaves the window', async t => {
+  const { now, current, options, row, transcript } = await oldMtimeFixture(t);
+  const stale = new Date(now - 26 * 3600000).toISOString();
+  const record = (n, type, changes = {}) => type === 'api-request'
+    ? { type, id: `request-${n}`, sessionId: id(n), cwd: current,
+      timestamp: new Date(now - 1000).toISOString(), ...changes }
+    : row(n, changes);
+  const files = [];
+  for (const type of ['assistant', 'api-request']) {
+    for (const foreign of [{ cwd: 'C:/outside' }, { sessionId: id(99) }]) {
+      const n = files.length + 1;
+      const prefix = [record(n, type, { timestamp: stale }), record(n, type, { ...foreign, timestamp: stale }),
+        { padding: 'x'.repeat(300 * 1024) }];
+      files.push(await transcript(n, [...prefix, record(n, type, { cwd: undefined })]
+        .map(value => JSON.stringify(value)).join('\n') + '\n'));
+    }
+  }
+  const rejected = await discoverClaude(options);
+  assert.equal(rejected.stats.tailCheckedFiles, files.length);
+  assert.deepEqual(rejected.files, [], 'a truncated first read cannot reuse the discovery directory as cwd evidence');
+  for (const [index, file] of files.entries()) {
+    const n = index + 1;
+    const type = n <= 2 ? 'assistant' : 'api-request';
+    await appendFile(file, [record(n, type, { timestamp: stale }), record(n, type, { cwd: undefined })]
+      .map(value => JSON.stringify(value)).join('\n') + '\n');
+    const frozen = new Date(now - 25 * 3600000);
+    await utimes(file, frozen, frozen);
+  }
+  const restored = await discoverClaude(options);
+  assert.deepEqual(new Set(restored.files.map(file => file.sessionId)), new Set([1, 2, 3, 4].map(id)),
+    'an explicit allowed cwd in the complete tail restores inheritance for later activity');
+  for (const file of restored.files) assert.equal(file.latestActivityAt, new Date(now - 1000).toISOString());
+});
+
+test('truncated request freshness requires an eligible matching-session cwd before inheritance', async t => {
+  const { now, current, options, transcript } = await oldMtimeFixture(t);
+  const request = (n, changes = {}) => ({ type: 'api-request', id: `request-${n}`, sessionId: id(n), cwd: current,
+    timestamp: new Date(now - 26 * 3600000).toISOString(), ...changes });
+  const cases = [{}, { sessionId: id(99) }, { cwd: 'C:/outside' }, { isApiErrorMessage: true },
+    { isMeta: true }, { isVisibleInTranscriptOnly: true }, { isCompactSummary: true }];
+  for (const [index, changes] of cases.entries()) {
+    const n = index + 1;
+    await transcript(n, ['x'.repeat(300 * 1024), JSON.stringify(request(n, changes)),
+      JSON.stringify(request(n, { cwd: undefined, timestamp: new Date(now - 1000).toISOString(),
+        params: { body: 'PRIVATE_REQUEST_BODY' } }))].join('\n') + '\n');
+  }
+  const result = await discoverClaude(options);
+  assert.deepEqual(result.files.map(file => file.sessionId), [id(1)],
+    'flagged and foreign requests cannot authorize the later cwd-less request');
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_REQUEST_BODY/);
+});
+
 test('future Claude timestamps are rechecked when time advances without file changes', async t => {
   const { now, options, row, transcript } = await oldMtimeFixture(t);
   await transcript(1, `${JSON.stringify(row(1, { timestamp: new Date(now + 1000).toISOString() }))}\n`);
