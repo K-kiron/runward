@@ -602,6 +602,15 @@ button,select,input {
   background: var(--accent)
 }
 
+.kind-attention {
+  background: var(--warning)
+}
+
+.source-request-cue {
+  color: var(--warning);
+  font-size: 12px
+}
+
 .kind-error {
   background: var(--negative)
 }

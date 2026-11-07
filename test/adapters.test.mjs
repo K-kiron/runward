@@ -242,8 +242,9 @@ test('a completion-only item keeps its identity when a matching tool response ar
     event(end, { type: 'function_call_output', call_id: 'question', output: 'Synthetic answer' }),
   ]);
   assert.equal(spans(first).length, 1);
-  assert.equal(spans(updated).length, 1);
-  assert.equal(spans(first)[0].id, spans(updated)[0].id);
+  assert.equal(spans(updated).length, 2);
+  assert.equal(spans(first)[0].id, spans(updated).find(span => span.kind === 'tool').id);
+  assert.equal(spans(updated).filter(span => span.kind === 'attention' && span.endedAt === null).length, 0);
 });
 
 test('invalid completed timing retains legacy pairing and warns instead of inventing an interval', () => {

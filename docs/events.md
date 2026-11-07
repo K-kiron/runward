@@ -50,7 +50,7 @@ The ingest capability cannot read snapshots, create browser sessions, claim work
 Upserts merge supplied fields into an existing record. Reuse IDs to close a span or update a run. New handoff/attention IDs must be unique; offering an existing handoff does not reopen it. Unknown fields and command types are rejected.
 
 - Agent states: `working`, `idle`, `waiting`, `offline`, `unknown`. Missing state defaults to `unknown`. Last-seen age is independent of state; the dashboard marks freshness older than two minutes as stale.
-- Span kinds: `thinking`, `tool`, `subagent`, `error`, `message`. New spans default to `message`, lane `main`, and `endedAt: null`. Send equal start/end timestamps for an instant. A null end denotes an open span; it is not proof that the underlying process is still alive.
+- Span kinds: `thinking`, `tool`, `subagent`, `attention`, `error`, `message`. New spans default to `message`, lane `main`, and `endedAt: null`. Send equal start/end timestamps for an instant. A null end denotes an open span; it is not proof that the underlying process is still alive. An `attention` span records a source application's request for user input; upsert its `endedAt` when the source records an answer or cancellation.
 - Run states: `running`, `passed`, `failed`. Running runs must have a null end; finished runs require an end. Checks and cost are nullable. Cost is USD; do not send an estimate as an observed charge without labeling its origin in your runner.
 - All dates are ISO UTC strings ending in `Z`, with at most three fractional digits. End times cannot precede start times. If a new record omits its start timestamp, server receipt time is used; an upsert does not automatically refresh existing timestamps.
 - Context/check counts are nonnegative safe integers or null. Costs are nonnegative finite numbers or null. A context limit of zero is not a usable denominator. Unknown values are not zero.
@@ -70,7 +70,7 @@ Owner names are labels supplied by a trusted local operator. They are **not auth
 | `handoff.claim` | `id`, `owner` | Use the handoff ID from the snapshot. |
 | `handoff.release` | `id`, `owner` | Use the handoff ID from the snapshot. |
 | `handoff.complete` | `id`, `owner` | Use the handoff ID from the snapshot. |
-| `attention.resolve` | `id` | Use the attention ID from the snapshot. |
+| `attention.resolve` | `id` | Use an explicit attention ID from the snapshot, without `sourceEventId`. |
 
 `POST /api/sources/{sourceId}/purge` also requires an action capability. It removes that source's records across all stored generations, retains revocation tombstones, revokes ingest access, and rejects replay into those generations. It does not delete source transcripts or backups. See [purge and retention](isolation.md#purge-and-retention).
 
@@ -91,11 +91,13 @@ The browser exchanges an issued root capability for a derived session, keeps it 
 
 The HTTP snapshot retains the record model's `version: 1`; it is not the on-disk version-2 envelope. Its source descriptors include revocation status but omit enrollment paths and file identities. Event details and agent working directories can still contain private paths. A changed `instanceId`, domain or environment requires browser reauthentication; see [browser clearing and lock behavior](isolation.md#capabilities-and-browser-sessions).
 
+Snapshot `attention` combines explicitly created attention records with read-only entries derived from open `attention` spans. A derived entry has `id` and `sourceEventId` equal to the source span's ID, `title` from its label, `createdAt` from its start, and the same agent and detail. It disappears when that span closes. Derived entries are not persisted as attention records and cannot be resolved through `attention.resolve`; answer in the source application. Explicit attention remains independently resolvable. Because span and explicit-attention IDs belong to separate collections, clients must distinguish derived entries by `sourceEventId`, even when the IDs coincide.
+
 `provenance` maps each scoped agent ID to `{ sourceId, toolInstanceId, generation, identity }`, derived from the server's enrollment. `identity` is either `{ "alias": null, "evidence": "unknown" }` or an alias with `evidence: "operator-asserted"`. Neither verifies an upstream account. Clients should use this map rather than guess provenance from project names, provider labels, or opaque record IDs.
 
 ## Retention and storage
 
-At most 500 agents, the latest 5,000 spans, and the latest 1,000 runs are retained. Old spans/runs are pruned by start timestamp. Handoffs and attention each retain at most 1,000 records; completed/resolved records are pruned first, and exceeding the limit with unresolved records rejects the write. Agent records are not automatically removed.
+At most 500 agents, 5,000 spans, and the latest 1,000 runs are retained. Open `attention` spans are preserved within the span limit; the remaining capacity retains the latest other spans by start timestamp. More than 5,000 unresolved attention spans rejects the write. Old runs are pruned by start timestamp. Explicit handoffs and attention each retain at most 1,000 records; completed/resolved records are pruned first, and exceeding the limit with unresolved records rejects the write. Derived snapshot attention entries follow their source spans' retention. Agent records are not automatically removed.
 
 The on-disk store is a version-2 envelope with `version`, `domain`, `sources`, `state`, and `revokedSources`. `state` contains the validated version-1 record snapshot; every record ID and agent reference is scoped to its enrolled domain/environment/source/generation. `sources` retains normalized enrollment metadata, including historical generations and generated file identity for watched files. `revokedSources` records revoked `sourceId:generation` keys. At most 1,000 source enrollments, including historical generations, are retained.
 

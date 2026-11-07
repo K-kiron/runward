@@ -1,7 +1,7 @@
 import { createConnection } from './connection.mjs';
 
 const $ = (selector) => document.querySelector(selector);
-const kinds = ['thinking', 'tool', 'subagent', 'error', 'message'];
+const kinds = ['thinking', 'tool', 'subagent', 'attention', 'error', 'message'];
 const state = {
   snapshot: null, access: null, owner: '', selectedAgent: null, selectedSpan: null,
   tab: 'waterfall', expanded: false, allRuns: false, completed: false,
@@ -260,8 +260,12 @@ function renderQueues(data) {
   $('#attention-count').textContent = attention.length;
   const attentionList = node('div', 'queue-list');
   for (const item of attention) {
-    const actions = append(node('div', 'queue-actions'), actionButton('Resolve', 'resolve', item.id));
-    attentionList.append(append(node('article', 'queue-item'), append(node('div', 'queue-top'), node('h3', 'queue-title', item.title), actions), queueMeta(item, null, 'attention'), detailDisclosure(item.detail, `attention:${item.id}`)));
+    const sourceRequest = typeof item.sourceEventId === 'string';
+    const kind = sourceRequest ? 'source-attention' : 'attention';
+    const actions = append(node('div', 'queue-actions'), sourceRequest
+      ? node('span', 'source-request-cue', 'Answer in source app')
+      : actionButton('Resolve', 'resolve', item.id));
+    attentionList.append(append(node('article', 'queue-item'), append(node('div', 'queue-top'), node('h3', 'queue-title', item.title), actions), queueMeta(item, null, kind), detailDisclosure(item.detail, `${kind}:${item.id}`)));
   }
   $('#attention').replaceChildren(attention.length ? attentionList : empty('Nothing needs your attention.'));
   const handoffs = data.handoffs.filter((item) => state.completed || item.status !== 'completed').sort((a, b) => timestamp(b.createdAt) - timestamp(a.createdAt));

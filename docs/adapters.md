@@ -17,12 +17,17 @@ Records are converted to one agent and timestamped spans per selected file, then
 | Codex | `event_msg` task/turn started, completed, aborted, error | Explicit working/idle state and lifecycle/error instants. Completion alone is not a passed run. |
 | Codex | `event_msg` token_count | Latest explicit input-token usage and model context-window limit; cumulative token spending is not presented as context usage. |
 | Codex | `event_msg` item_completed | Reported reasoning, assistant-message, tool, file-change, subagent-activity, and compaction events, with explicit completion timings and failure signals. |
+| Codex | `request_user_input`, `request_user_input_async`, and completed async `AgentMessage.questions` | Separate attention spans appear in the Needs attention queue. Blocking input marks the agent waiting until its tool result or turn end. Async questions can coexist with continued work. |
 | DSH (DeepSeek Harness) | Session JSONL and Zstandard logs | Session metadata, recorded lifecycle, messages, reasoning, and paired tool calls/results. |
 | OpenCode | Session export JSON and `run --format json` JSONL | Message/part IDs, text, reasoning, explicit tool state and time, errors, and subtask activity. |
 | OpenHands | CLI headless JSONL and SDK event JSON | Messages, action/observation pairs, and explicit agent errors. Timezone-naive records require an explicit capture timestamp. |
 | Gemini CLI | Chat-recording JSONL and older conversation JSON | Latest message snapshots, metadata updates, patches, rewinds, thought summaries, and scoped tool IDs. |
 
 The readers follow common producer record shapes, not a version-negotiated integration. Relevant primary references are the [Codex protocol definitions](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs), [Codex message models](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/models.rs), and [Claude Code context-window fields](https://code.claude.com/docs/en/statusline#context-window-fields). Producer schemas can change; unsupported records are ignored.
+
+Async input handling was checked against Codex Desktop `0.163.0-alpha.10.2` recordings. The immediate `{"accepted":true}` tool output only registers a question. A user `input_text` reply wrapped in `<send_user_message_question_reply>` contains a JSON array of answers. Each answer closes the matching question using its `questionItemId`, a JSON-encoded `["request_user_input_async", callId, questionIndex]`. Each request stays open until all its questions have matching replies, including replies after turn completion. Ordinary messages do not close requests. Source requests must be answered in the source app; Runward does not submit answers. Approval dialogs, cancellations, and reply formats absent from the selected recording are not inferred.
+
+Unanswered request spans are kept within the 5,000-span history bound; more than 5,000 unresolved requests rejects an import. Closing updates for answered requests are also replayed when their old spans fall outside retained history, so a previously saved request does not remain open after restart.
 
 ## Select or capture a recording
 

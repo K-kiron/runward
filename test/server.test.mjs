@@ -55,6 +55,67 @@ test('concurrent claims have exactly one winner and a durable domain result', as
   assert.equal(await readFile(dataFile, 'utf8'), before);
 });
 
+test('open source attention is projected read-only, replay-safe, and cleared by its span', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'runward-test-'));
+  const dataFile = join(folder, 'state.json');
+  const { app, send, act, read } = await fixture(t, { dataFile });
+  t.after(async () => { await app.close(); await rm(folder, { recursive: true, force: true }); });
+  const request = { type: 'span.upsert', data: { id: 'input-request', agentId: 'a', kind: 'attention', label: 'User input requested', detail: '<script>synthetic question</script>', startedAt: '2026-01-02T09:00:00.000Z', endedAt: null } };
+  assert.equal((await send([agent, request, { type: 'attention.open', data: { id: 'operator-request', agentId: 'a', title: 'Review changes' } }])).status, 200);
+  let state = await (await read('/api/state')).json();
+  const explicit = state.attention.find(item => !item.sourceEventId);
+  const derived = state.attention.find(item => item.sourceEventId);
+  assert.deepEqual(derived, { id: state.events[0].id, agentId: state.agents[0].id, title: request.data.label, detail: request.data.detail, createdAt: request.data.startedAt, resolvedAt: null, sourceEventId: state.events[0].id });
+  assert.equal((await act({ type: 'attention.resolve', data: { id: derived.id } })).status, 400);
+  assert.equal((await send(request)).status, 200);
+  assert.equal(app.snapshot().attention.length, 2);
+  const saved = await loadState(dataFile);
+  assert.equal(saved.state.attention.length, 1);
+  assert.equal(saved.state.attention[0].id, explicit.id);
+  assert.equal(Object.hasOwn(saved.state.attention[0], 'sourceEventId'), false);
+
+  const endedAt = '2026-01-02T09:00:05.000Z';
+  assert.equal((await send({ type: 'span.upsert', data: { id: request.data.id, endedAt } })).status, 200);
+  state = await (await read('/api/state')).json();
+  assert.deepEqual(state.attention, [explicit]);
+  assert.equal(state.events[0].endedAt, endedAt);
+  assert.equal((await act({ type: 'attention.resolve', data: { id: explicit.id } })).status, 200);
+  assert.notEqual(app.snapshot().attention[0].resolvedAt, null);
+});
+
+test('derived attention is restored from source spans and disappears on source purge', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'runward-test-'));
+  const dataFile = join(folder, 'state.json');
+  const { app, send } = await fixture(t, { dataFile });
+  t.after(async () => { await app.close(); await rm(folder, { recursive: true, force: true }); });
+  assert.equal((await send([agent, { type: 'span.upsert', data: { id: 'pending', agentId: 'a', kind: 'attention', label: 'Synthetic input request' } }])).status, 200);
+  const before = app.snapshot().attention;
+  await app.close();
+  const restored = await createServer({ dataFile });
+  t.after(() => restored.close());
+  assert.deepEqual(restored.snapshot().attention, before);
+  await restored.purgeSource('api');
+  assert.equal(restored.snapshot().attention.length, 0);
+  assert.equal((await loadState(dataFile)).state.events.length, 0);
+  await restored.close();
+});
+
+test('explicit and source attention with coincident IDs retain independent lifecycles', async t => {
+  const { app, send, act } = await fixture(t);
+  assert.equal((await send([agent,
+    { type: 'attention.open', data: { id: 'shared', agentId: 'a', title: 'Explicit request' } },
+    { type: 'span.upsert', data: { id: 'shared', agentId: 'a', kind: 'attention', label: 'Source request' } },
+  ])).status, 200);
+  const attention = app.snapshot().attention;
+  assert.equal(attention.length, 2);
+  assert.equal(attention[0].id, attention[1].id);
+  assert.equal((await act({ type: 'attention.resolve', data: { id: attention[0].id } })).status, 200);
+  const updated = app.snapshot().attention;
+  assert.notEqual(updated[0].resolvedAt, null);
+  assert.equal(updated[1].resolvedAt, null);
+  assert.equal(updated[1].sourceEventId, attention[1].id);
+});
+
 test('a failed durable replacement leaves the in-memory snapshot unchanged', async t => {
   const folder = await mkdtemp(join(tmpdir(), 'runward-test-'));
   const dataFile = join(folder, 'state.json');
