@@ -149,7 +149,10 @@ export async function createServer({ domain = { id: 'local', environmentId: 'loc
       const source = byPrefix.get(agent.id.slice(0, 36));
       return [agent.id, { sourceId: source.id, toolInstanceId: source.toolInstanceId, generation: source.generation, identity: source.identity }];
     }));
-    return structuredClone({ ...current.state, domain: { ...domain }, sources: current.sources.map(({ path, fileIdentity, ...source }) => ({ ...source, revoked: current.revokedSources.includes(sourceKey(source)) })), provenance, mode, instanceId, serverTime: new Date().toISOString() });
+    const attention = [...current.state.attention, ...current.state.events
+      .filter(event => event.kind === 'attention' && event.endedAt === null)
+      .map(event => ({ id: event.id, agentId: event.agentId, title: event.label, detail: event.detail, createdAt: event.startedAt, resolvedAt: null, sourceEventId: event.id }))];
+    return structuredClone({ ...current.state, attention, domain: { ...domain }, sources: current.sources.map(({ path, fileIdentity, ...source }) => ({ ...source, revoked: current.revokedSources.includes(sourceKey(source)) })), provenance, mode, instanceId, serverTime: new Date().toISOString() });
   };
   const access = grant => ({ readable: true, writable: grant.role === 'action', domain: { ...domain }, instanceId });
   const broadcast = () => {

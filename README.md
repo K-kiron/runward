@@ -29,7 +29,7 @@ Live mode requires an explicit domain/environment or a config file. It persists 
 - Project, provider, and status filters with consistent counts and freshness indicators.
 - Shared-clock waterfall lanes, including overlap, idle gaps, and open spans. Click a segment to inspect its timestamp, duration, and detail.
 - Console and chronological event views; run results with check counts and failure details.
-- Attention items with explicit resolution, and handoffs with claim, release, and complete transitions.
+- Attention items with explicit resolution, source input requests that clear when answered, and handoffs with claim, release, and complete transitions.
 - Live updates through server-sent events, with reconnect and stale-state feedback.
 - Selected-file transcript import for Codex, Claude Code, DSH (DeepSeek Harness), OpenCode, OpenHands, and Gemini CLI, plus a provider-neutral event API.
 
@@ -79,6 +79,8 @@ Paths resolve relative to the config file. Identity aliases are optional, opaque
 Selected files are polled every two seconds. While running, replacement, truncation, link retargeting, or rewriting previously read bytes pauses the source. This also affects legitimate exports rewritten in place: use a reviewed new generation. Across restarts, file identity is checked, but a same-inode content rewrite made while stopped is not detected by the process-local append guard. See [source lifecycle and limits](docs/isolation.md#source-enrollment-and-file-lifecycle).
 
 The six readers support Codex, Claude Code, DSH, OpenCode, OpenHands, and Gemini CLI. DSH Zstandard logs require Node.js 22.15+ with Zstandard support. See [adapter coverage and capture commands](docs/adapters.md) for supported formats and timing limits.
+
+Codex input requests from selected recordings appear in **Needs attention**. Async questions remain open after the tool reports `accepted` and can coexist with an agent that is still **Working**. Answer in the source app; a matching recorded reply clears the request automatically. These source requests do not have a **Resolve** action in Runward. See [supported input and reply formats](docs/adapters.md) for coverage and limits.
 
 For your own agent or runner, submit explicit events using [the event API](docs/events.md):
 
