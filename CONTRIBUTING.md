@@ -9,8 +9,10 @@ Run `npm run check` before submitting changes. Add focused tests when changing e
 - `lib/adapters.mjs`: pure transcript conversion.
 - `lib/enrollment.mjs`: canonical file enrollment and guarded append-only reads.
 - `lib/watch.mjs`: explicit-file polling.
+- `lib/desktop/`: opt-in scoped desktop discovery, bounded collection, and saved session titles.
 - `server.mjs`: local HTTP, authorization, streaming, and durable writes.
 - `cli.mjs`: domain configuration, source-bound ingest, migration and purge commands.
+- `scripts/desktop-overview.mjs`: memory-only desktop collector entry point and explicit directory configuration.
 - `public/`: browser interface with no external dependencies.
 - `apps/openhands/src/`: read-only Agent Canvas App using the shared OpenHands reader.
 

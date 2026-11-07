@@ -52,9 +52,15 @@ The App targets the beta host API 1 on supported local backends. OpenHands Cloud
 
 ## Connect actual sessions
 
-Choose specific transcript files for one data-access domain; Runward never scans your home directory, discovers provider logins, or edits provider settings.
+Choose specific transcript files for one data-access domain. The regular CLI reads only enrolled files. For multiple desktop sessions, the optional [desktop collector](docs/desktop.md) discovers transcripts inside explicitly configured log directories and workspace scopes. Neither mode discovers provider logins or edits provider settings.
 
-Session labels come from incoming data. Codex and Claude Code imports currently use the provider and transcript session ID, which may be a UUID. Integrations can supply a readable `agent.upsert.name`; Runward does not read desktop window titles or automatically discover open conversations.
+Session labels come from incoming data. Regular Codex and Claude Code file imports use the provider and transcript session ID, which may be a UUID. Integrations can supply a readable `agent.upsert.name`. The desktop collector can read saved session titles from an explicitly selected index or registry; it observes transcript activity rather than counting operating-system windows.
+
+```sh
+npm run desktop -- --config /path/to/desktop.json
+```
+
+Desktop collection is opt-in and keeps activity in memory. Configure the permitted workspace roots and transcript directories as described in [the desktop guide](docs/desktop.md). It discovers new main sessions, keeps session identities separate, and reads new activity even when Windows leaves an open log's modification time unchanged.
 
 ```sh
 node cli.mjs --domain personal --environment laptop --watch "codex=/absolute/path/rollout.jsonl"

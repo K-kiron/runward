@@ -1,6 +1,6 @@
 # Domain isolation
 
-Runward uses one authenticated server process and persisted store per domain/environment. A **domain** is an operator-defined data-access scope, such as personal or company work. Every reader of that domain can see its enrolled sources, including raw event details. Split projects into different domains when they require different readers, even if they use the same provider account.
+The regular Runward CLI uses one authenticated server process and persisted store per domain/environment. The optional [desktop collector](desktop.md) uses the same authenticated server with memory-only activity and explicitly configured directory scopes. A **domain** is an operator-defined data-access scope, such as personal or company work. Every reader of that domain can see its enrolled sources, including raw event details. Split projects into different domains when they require different readers, even if they use the same provider account.
 
 This implements the P0 separate-instance boundary from [issue #3](https://github.com/K-kiron/runward/issues/3). The proposed P1 overview that shares only approved metadata across domains is not implemented. There is no combined raw-data endpoint, shared-process tenant manager, provider login broker, or automatic account discovery. Record retention is currently bounded by fixed limits, not configurable per-source policies.
 

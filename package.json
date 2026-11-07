@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node cli.mjs",
     "demo": "node cli.mjs --demo",
+    "desktop": "node scripts/desktop-overview.mjs",
     "build:canvas": "node scripts/build-canvas-app.mjs",
     "test": "node --test",
     "check": "node scripts/build-canvas-app.mjs --check && node --check apps/openhands/extension.js && node --check server.mjs && node --check cli.mjs && node --check public/app.mjs && node --test"
