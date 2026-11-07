@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activityTime, eventActivityTime, groupActivityByProvider, recentActivity } from '../public/activity.mjs';
+import { activityTime, awaitingEventRange, eventActivityTime, groupActivityByProvider, recentActivity } from '../public/activity.mjs';
 
 const now = Date.parse('2026-01-15T12:00:00.000Z');
 const at = secondsAgo => new Date(now - secondsAgo * 1000).toISOString();
@@ -8,6 +8,27 @@ const agent = (id, secondsAgo, status = 'unknown') => ({ id, lastSeen: at(second
 const span = (id, agentId, secondsAgo, endAgo = null) => ({ id, agentId, startedAt: at(secondsAgo), endedAt: endAgo === null ? null : at(endAgo) });
 const snapshot = (agents, events = [], extra = {}) => ({ agents, events, runs: [], handoffs: [], attention: [], ...extra });
 const ids = data => data.agents.map(agent => agent.id);
+
+test('recent reported working state gets a separate waiting range without extending recorded spans', () => {
+  const source = snapshot([agent('busy', 45, 'working')], [span('completed', 'busy', 50, 45)]);
+  const view = recentActivity(source, { now });
+  assert.deepEqual(awaitingEventRange(view.agents[0], view.latestActivity.get('busy'), now), { start: now - 45_000, end: now });
+  assert.equal(eventActivityTime(source.events[0], now), now - 45_000);
+  assert.equal(view.latestActivity.get('busy'), now - 45_000);
+  assert.deepEqual(awaitingEventRange(view.agents[0], view.latestActivity.get('busy'), now + 10_000), { start: now - 45_000, end: now + 10_000 });
+  assert.equal(awaitingEventRange(view.agents[0], view.latestActivity.get('busy'), now + 75_001), null);
+  assert.deepEqual(recentActivity(source, { now: now + 300_000 }).agents, []);
+});
+
+test('waiting range requires fresh, valid working evidence and never revives another state', () => {
+  for (const status of ['idle', 'waiting', 'offline', 'unknown', 'stale']) {
+    assert.equal(awaitingEventRange(agent('a', 1, status), now - 1000, now), null);
+  }
+  for (const latest of [null, undefined, NaN, Infinity, '2026-01-15T12:00:00Z', now + 1, now - 120_001]) {
+    assert.equal(awaitingEventRange(agent('a', 1, 'working'), latest, now), null);
+  }
+  assert.deepEqual(awaitingEventRange(agent('a', 120, 'working'), now - 120_000, now), { start: now - 120_000, end: now });
+});
 
 test('default shows only recent sessions, newest first, retaining unknown lifecycle', () => {
   const source = snapshot([agent('old', 301), agent('first-imported', 90, 'working'), agent('newest', 2), agent('boundary', 300)]);

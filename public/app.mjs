@@ -1,5 +1,5 @@
 import { createConnection } from './connection.mjs';
-import { activityTime, eventActivityTime, groupActivityByProvider, recentActivity } from './activity.mjs';
+import { activityTime, awaitingEventRange, eventActivityTime, groupActivityByProvider, recentActivity } from './activity.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const kinds = ['thinking', 'tool', 'subagent', 'attention', 'error', 'message'];
@@ -179,6 +179,7 @@ function renderActivity(data) {
     return;
   }
   const range = data.range;
+  let awaitingEvents = false;
   append(target, append(node('div', 'activity-axis'), node('span', '', 'Session / project'), axis(range.start, range.end), node('span', 'axis-label', 'State / last activity')));
   const groups = groupActivityByProvider(data.agents, data.latestActivity);
   for (const [index, group] of groups.entries()) {
@@ -196,6 +197,15 @@ function renderActivity(data) {
       label.setAttribute('aria-pressed', String(agent.id === state.selectedAgent));
       append(label, append(node('span', 'agent-primary'), node('i', `status-dot ${displayStatus}`, null, { 'aria-hidden': 'true' }), node('span', 'agent-title', agent.name, { title: agent.name }), node('span', 'provider', agent.provider)), node('span', 'agent-secondary', agent.project));
       const track = node('div', 'lane-track', null, { 'aria-label': `${agent.name} activity` });
+      const awaiting = awaitingEventRange(agent, latest, range.end);
+      if (awaiting) {
+        awaitingEvents = true;
+        const description = 'Awaiting next event. Last reported Working; continued execution and duration are not confirmed.';
+        const gap = node('span', 'awaiting-event', null, { role: 'img', 'aria-label': description, title: description });
+        gap.style.left = `${Math.max(0, (awaiting.start - range.start) / (range.end - range.start) * 100)}%`;
+        gap.style.width = `${(awaiting.end - Math.max(range.start, awaiting.start)) / (range.end - range.start) * 100}%`;
+        track.append(gap);
+      }
       const agentEvents = data.events.filter((event) => event.agentId === agent.id);
       // The overview overlays lanes; the inspector separates them on the same clock.
       for (const event of [...agentEvents].sort((a, b) => timestamp(a.startedAt) - timestamp(b.startedAt))) {
@@ -203,12 +213,15 @@ function renderActivity(data) {
         if (segment) track.append(segment);
       }
       const readout = append(node('div', 'agent-readout'), node('span', `state-label ${displayStatus}`, capitalize(displayStatus)), node('span', '', age(latest)));
+      if (awaiting) readout.append(node('span', 'activity-note', 'Awaiting next event'));
       append(row, label, track, readout);
       section.append(row);
     }
     target.append(section);
   }
-  $('#activity-legend').replaceChildren(...legend(data.events.filter((event) => eventEnd(event) >= range.start && timestamp(event.startedAt) <= range.end)).childNodes);
+  const activityLegend = legend(data.events.filter((event) => eventEnd(event) >= range.start && timestamp(event.startedAt) <= range.end));
+  if (awaitingEvents) activityLegend.append(append(node('span', 'legend-item'), node('i', 'legend-mark awaiting-mark', null, { 'aria-hidden': 'true' }), node('span', '', 'Awaiting next event')));
+  $('#activity-legend').replaceChildren(...activityLegend.childNodes);
 }
 function renderRuns(data) {
   const runs = [...data.runs].sort((a, b) => timestamp(b.startedAt) - timestamp(a.startedAt));
@@ -387,7 +400,7 @@ function renderInspector(data = state.snapshot ? scope() : null) {
   const body = node('div', 'inspector-body', null, { id: 'inspector-content', role: 'tabpanel', 'aria-labelledby': `tab-${state.tab}`, tabindex: '0' });
   body.append(node('p', 'inspector-description', state.tab === 'waterfall' ? `${events.length} spans in the last ${state.window} minutes · shared clock across lanes` : state.tab === 'console' ? `Labels and details in the last ${state.window} minutes, newest first. This is not an interactive terminal.` : `Events in the last ${state.window} minutes, newest first. Select an event to inspect its span.`));
   body.append(state.tab === 'waterfall' ? waterfall(events) : state.tab === 'console' ? consoleView(events) : timelineView(events));
-  body.append(node('p', 'inspector-note', 'Span timing reflects what the integration reported. Open spans mark their recorded start; an end or continued activity is not inferred.'));
+  body.append(node('p', 'inspector-note', 'Span timing reflects what the integration reported. Open spans mark their recorded start. Dashed areas in the overview indicate a recent Working report awaiting another event; they are not measured activity or proof of continued execution.'));
   container.replaceChildren(header, tabs, body);
 }
 function renderOnboarding() {
