@@ -457,6 +457,33 @@ button,select,input {
   border-top-color: var(--accent)
 }
 
+.activity-group+.activity-group {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border)
+}
+
+.activity-group-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 12px 0 8px;
+  font-size: 14px;
+  line-height: 1.5
+}
+
+.activity-group-name {
+  overflow-wrap: anywhere;
+  font-weight: 650
+}
+
+.activity-group-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400
+}
+
 .agent-name {
   display: block;
   width: 100%;
@@ -661,22 +688,39 @@ button,select,input {
 
 .lower-grid {
   display: grid;
-  grid-template-columns: minmax(0,1.35fr) minmax(0,1fr);
+  grid-template-columns: minmax(450px,1.35fr) minmax(0,1fr) minmax(0,1fr);
   gap: 24px;
-  margin-top: 24px;
-  align-items: start
+  margin-top: 24px
 }
 
-/* 1.35fr + 1fr + 24px gutter fills the same canvas edges as activity. */
-.coordination {
-  display: grid;
-  gap: 24px
+.lower-grid>.panel {
+  display: flex;
+  flex-direction: column
+}
+
+.lower-grid .panel-heading {
+  min-height: 62px;
+  flex-wrap: wrap
+}
+
+.lower-grid .panel-heading h2 {
+  min-width: 0
+}
+
+#runs,#attention,#handoffs {
+  flex: 1
+}
+
+.lower-grid .empty {
+  padding-top: 16px;
+  padding-bottom: 20px
 }
 
 .section-note {
   color: var(--muted);
   font-size: 11px;
-  margin: 0 20px 5px
+  padding: 10px 20px;
+  border-top: 1px solid var(--border)
 }
 
 .run-list {
@@ -1274,11 +1318,11 @@ dialog input+p {
     max-width: 85px
   }
   .lower-grid {
-    grid-template-columns: minmax(0,1.1fr) minmax(0,1fr);
+    grid-template-columns: repeat(2,minmax(0,1fr));
     gap: 20px
   }
-  .coordination {
-    gap: 20px
+  .runs-panel {
+    grid-column: 1/-1
   }
   .run-header,.run-row {
     gap: 8px;
@@ -1288,7 +1332,7 @@ dialog input+p {
     padding-left: 16px;
     padding-right: 16px
   }
-  .run-list,.queue-list {
+  .run-list,.queue-list,.lower-grid .empty,.section-note {
     padding-left: 16px;
     padding-right: 16px
   }
@@ -1316,13 +1360,6 @@ dialog input+p {
 @media(max-width:800px) {
   .topbar-label {
     display: none
-  }
-  .lower-grid {
-    grid-template-columns: 1fr
-  }
-  .coordination {
-    grid-template-columns: 1fr 1fr;
-    align-items: start
   }
   .activity-axis,.agent-row {
     grid-template-columns: 185px minmax(0,1fr) 80px;
@@ -1567,12 +1604,16 @@ dialog input+p {
     font-size: 11px
   }
   .lower-grid {
+    grid-template-columns: minmax(0,1fr);
     margin-top: 16px;
     gap: 16px
   }
-  .coordination {
-    grid-template-columns: 1fr;
-    gap: 16px
+  .lower-grid .panel-heading {
+    min-height: 54px
+  }
+  .lower-grid .empty {
+    padding-left: 12px;
+    padding-right: 12px
   }
   .run-list,.queue-list {
     padding-left: 12px;
@@ -1644,11 +1685,8 @@ dialog input+p {
   }
   .section-note {
     font-size: 11px;
-    margin-left: 12px;
-    margin-right: 12px
-  }
-  .handoff-panel .panel-heading {
-    flex-wrap: wrap
+    padding-left: 12px;
+    padding-right: 12px
   }
   .panel-heading>.text-button {
     font-size: 11px;
@@ -1830,13 +1868,6 @@ dialog input+p {
   .agent-name {
     padding-top: 5px;
     padding-bottom: 5px
-  }
-  .lower-grid {
-    grid-template-columns: minmax(0,1.15fr) minmax(0,1.5fr)
-  }
-  .coordination {
-    grid-template-columns: minmax(0,1fr) minmax(0,1fr);
-    align-items: start
   }
 }
 

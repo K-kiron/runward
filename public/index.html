@@ -29,7 +29,7 @@
         <div class="filter-selects"><div class="field"><label class="sr-only" for="project">Project</label><select id="project"><option value="">All projects</option></select></div><div class="field"><label class="sr-only" for="provider">Provider</label><select id="provider"><option value="">All providers</option></select></div><div class="field"><label class="sr-only" for="status">Agent status</label><select id="status"><option value="">All statuses</option><option value="working">Working</option><option value="idle">Idle</option><option value="waiting">Waiting</option><option value="offline">Offline</option><option value="stale">Stale</option></select></div><button id="clear-filters" type="button" class="text-button" hidden>Clear</button></div>
       </form>
       <section class="panel activity-panel" aria-labelledby="activity-heading">
-        <div class="panel-heading"><h2 id="activity-heading">Activity lanes <span id="agent-count" class="count"></span></h2><div class="heading-tools"><label class="sr-only" for="window">Activity window</label><select id="window"><option value="15">Last 15 minutes</option><option value="60">Last hour</option><option value="all" selected>All recorded activity</option></select></div></div>
+        <div class="panel-heading"><h2 id="activity-heading">Activity lanes <span id="agent-count" class="count"></span></h2><div class="heading-tools"><label class="sr-only" for="window">Active session window</label><select id="window"><option value="5" selected>Active in last 5 minutes</option><option value="15">Active in last 15 minutes</option><option value="60">Active in last hour</option></select></div></div>
         <div id="activity" class="activity"><p class="empty">Activity is locked. No agent data is loaded before you connect.</p></div>
         <div class="panel-footer"><div id="activity-legend" class="legend"></div><span id="freshness" class="muted">Connect to read activity</span></div>
       </section>
@@ -38,10 +38,8 @@
     <div id="onboarding" class="panel onboarding" hidden></div>
     <div class="lower-grid overview">
       <section class="panel runs-panel" aria-labelledby="runs-heading"><div class="panel-heading"><h2 id="runs-heading">Recent runs <span id="run-count" class="count"></span></h2><button id="toggle-runs" class="text-button" type="button" hidden>View all</button></div><div id="runs"><p class="empty">Loading runs…</p></div></section>
-      <div class="coordination">
-        <section class="panel attention-panel" aria-labelledby="attention-heading"><div class="panel-heading"><h2 id="attention-heading">Needs attention <span id="attention-count" class="count"></span></h2></div><div id="attention"><p class="empty">Loading requests…</p></div></section>
-        <section class="panel handoff-panel" aria-labelledby="handoffs-heading"><div class="panel-heading"><h2 id="handoffs-heading">Handoffs <span id="handoff-count" class="count"></span></h2><button id="toggle-completed" class="text-button" type="button" aria-pressed="false">Show completed</button></div><p class="section-note">Claims assign work. They do not start an agent.</p><div id="handoffs"><p class="empty">Loading handoffs…</p></div></section>
-      </div>
+      <section class="panel attention-panel" aria-labelledby="attention-heading"><div class="panel-heading"><h2 id="attention-heading">Needs attention <span id="attention-count" class="count"></span></h2></div><div id="attention"><p class="empty">Loading requests…</p></div></section>
+      <section class="panel handoff-panel" aria-labelledby="handoffs-heading"><div class="panel-heading"><h2 id="handoffs-heading">Handoffs <span id="handoff-count" class="count"></span></h2><button id="toggle-completed" class="text-button" type="button" aria-pressed="false">Show completed</button></div><div id="handoffs"><p class="empty">Loading handoffs…</p></div><p class="section-note">Claims assign work. They do not start an agent.</p></section>
     </div>
     <footer class="page-footer"><span>Local first. Your workspace, in view.</span><span id="access-label">Locked · authentication required</span></footer>
   </main>

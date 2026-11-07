@@ -1,11 +1,12 @@
 import { createConnection } from './connection.mjs';
+import { activityTime, eventActivityTime, groupActivityByProvider, recentActivity } from './activity.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const kinds = ['thinking', 'tool', 'subagent', 'error', 'message'];
 const state = {
   snapshot: null, access: null, owner: '', selectedAgent: null, selectedSpan: null,
   tab: 'waterfall', expanded: false, allRuns: false, completed: false,
-  search: '', project: '', provider: '', status: '', window: 'all',
+  search: '', project: '', provider: '', status: '', window: '5',
   connected: false, phase: 'locked', receivedAt: 0, clockOffset: 0, pending: false,
 };
 let loginAttempt = 0;
@@ -41,7 +42,7 @@ function duration(milliseconds) {
   return minutes < 60 ? `${minutes}m ${Math.floor(seconds % 60)}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 function age(value) {
-  const time = timestamp(value);
+  const time = typeof value === 'number' ? value : timestamp(value);
   if (time === null) return 'Unknown age';
   const seconds = Math.max(0, (now() - time) / 1000);
   if (seconds < 10) return 'Just now';
@@ -50,23 +51,20 @@ function age(value) {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   return `${Math.floor(seconds / 86400)}d ago`;
 }
-function stale(agent) { return agent.status !== 'offline' && timestamp(agent.lastSeen) !== null && now() - timestamp(agent.lastSeen) > 120_000; }
-function statusOf(agent) { return stale(agent) ? 'stale' : agent.status; }
+function stale(agent, latest = activityTime(agent.lastSeen, now())) { return !['offline', 'unknown'].includes(agent.status) && latest !== null && now() - latest > 120_000; }
+function statusOf(agent, latest) { return stale(agent, latest) ? 'stale' : agent.status; }
 function capitalize(text) { return text ? text[0].toUpperCase() + text.slice(1) : 'Unknown'; }
-function scopedAgents() {
-  if (!state.snapshot) return [];
-  return state.snapshot.agents.filter((agent) => {
+function scope() {
+  const recent = recentActivity(state.snapshot, { now: now(), windowMinutes: state.window });
+  const agents = recent.agents.filter((agent) => {
     const haystack = `${agent.name} ${agent.project} ${agent.provider}`.toLowerCase();
     return (!state.search || haystack.includes(state.search.toLowerCase())) &&
       (!state.project || agent.project === state.project) && (!state.provider || agent.provider === state.provider) &&
-      (!state.status || (state.status === 'stale' ? stale(agent) : agent.status === state.status));
+      (!state.status || statusOf(agent, recent.latestActivity.get(agent.id)) === state.status);
   });
-}
-function scope() {
-  const agents = scopedAgents();
   const ids = new Set(agents.map((agent) => agent.id));
-  const pick = (key) => state.snapshot[key].filter((item) => ids.has(item.agentId));
-  return { agents, runs: pick('runs'), handoffs: pick('handoffs'), attention: pick('attention'), events: pick('events') };
+  const pick = (key) => recent[key].filter((item) => ids.has(item.agentId));
+  return { ...recent, availableAgents: recent.agents, agents, runs: pick('runs'), handoffs: pick('handoffs'), attention: pick('attention'), events: pick('events') };
 }
 function agentById(id) { return state.snapshot?.agents.find((agent) => agent.id === id); }
 function announce(message) { $('#announcement').textContent = message; }
@@ -115,24 +113,25 @@ function updateOptions(selector, values, allLabel, selected) {
   select.value = next.includes(selected) ? selected : '';
 }
 function renderSummary(data) {
-  const working = data.agents.filter((agent) => agent.status === 'working' && !stale(agent)).length;
+  const working = data.agents.filter((agent) => statusOf(agent, data.latestActivity.get(agent.id)) === 'working').length;
   const attention = data.attention.filter((item) => !item.resolvedAt).length;
   const offered = data.handoffs.filter((item) => item.status === 'offered').length;
   const running = data.runs.filter((run) => run.status === 'running').length;
   const metrics = [
-    [working, 'agents working', ` / ${data.agents.length}`], [attention, 'need attention'],
+    [working, 'sessions working', ` / ${numberFormat.format(data.agents.length)}`,
+      `${working} working out of ${data.agents.length} recently active sessions in this filtered view (last ${state.window} minutes). Stale and unknown sessions are excluded from working.`],
+    [attention, 'need attention'],
     [offered, 'open handoffs'], [running, 'runs in progress'],
   ];
-  $('#summary').replaceChildren(...metrics.map(([value, label, total]) => {
+  $('#summary').replaceChildren(...metrics.map(([value, label, total, description]) => {
     const valueNode = node('span', 'metric-value', numberFormat.format(value));
     if (total) valueNode.append(node('span', 'metric-sub', total));
-    return append(node('div', 'metric'), valueNode, node('span', 'metric-label', label));
+    return append(node('div', 'metric', null, description ? { title: description, 'aria-label': description } : {}), valueNode, node('span', 'metric-label', label));
   }));
-  const staleCount = data.agents.filter(stale).length;
   $('#finding').textContent = attention
-    ? `${attention} ${attention === 1 ? 'request needs' : 'requests need'} a decision.${staleCount ? ` ${staleCount} ${staleCount === 1 ? 'agent has' : 'agents have'} stale activity.` : ' Review the queue or inspect an agent’s activity.'}`
-    : data.agents.length ? `No open attention requests.${staleCount ? ` ${staleCount} ${staleCount === 1 ? 'agent has' : 'agents have'} stale activity.` : ' Inspect activity and keep work moving.'}`
-      : state.snapshot.agents.length ? 'No agents match this view.' : 'Connect an agent to start observing its activity.';
+    ? `${attention} ${attention === 1 ? 'request needs' : 'requests need'} a decision in this view.`
+    : data.agents.length ? `Activity in the last ${state.window} minutes, newest first within each platform. Sessions disappear after inactivity.`
+      : 'No recent sessions in this view. Idle sources reappear automatically when new activity arrives.';
 }
 function kindClass(kind) { return `kind-${kinds.includes(kind) ? kind : 'message'}`; }
 function legend(events) {
@@ -143,17 +142,8 @@ function legend(events) {
   }
   return group;
 }
-function eventEnd(event) { return event.endedAt ? timestamp(event.endedAt) : now(); }
-function bounds(events, useWindow = true) {
-  const starts = events.map((event) => timestamp(event.startedAt)).filter((value) => value !== null);
-  const ends = events.map(eventEnd).filter((value) => value !== null);
-  let end = useWindow && state.window !== 'all' ? now() : Math.max(...ends, ...starts, now());
-  let start = starts.length ? Math.min(...starts) : end - 60_000;
-  if (useWindow && state.window !== 'all') start = end - Number(state.window) * 60_000;
-  else if (events.length && !events.some((event) => !event.endedAt)) end = Math.max(...ends, ...starts);
-  if (end - start < 1000) end = start + 1000;
-  return { start, end };
-}
+function eventEnd(event) { return eventActivityTime(event, now()); }
+function bounds() { const end = now(); return { start: end - Number(state.window) * 60_000, end }; }
 function axis(start, end) {
   const ticks = node('div', 'axis-times');
   for (let index = 0; index <= 3; index++) {
@@ -165,12 +155,12 @@ function axis(start, end) {
   return ticks;
 }
 function mark(event, range, view = 'overview') {
-  const start = timestamp(event.startedAt);
+  const start = activityTime(event.startedAt, now());
   const end = eventEnd(event);
   if (start === null || end === null || end < range.start || start > range.end) return null;
   const left = Math.max(0, (start - range.start) / (range.end - range.start) * 100);
   const width = Math.max(0, (Math.min(range.end, end) - Math.max(range.start, start)) / (range.end - range.start) * 100);
-  const accessible = `${event.label} · ${event.kind} · ${clock(start)} · ${event.endedAt ? duration(end - start) : 'ongoing'}`;
+  const accessible = `${event.label} · ${event.kind} · ${clock(start)} · ${event.endedAt ? duration(end - start) : 'end not reported'}`;
   const element = button('', 'select-span', event.id, `span-mark ${kindClass(event.kind)}${event.endedAt ? '' : ' open'}${state.selectedSpan === event.id ? ' selected' : ''}`);
   element.dataset.focus = `span:${view}:${event.id}`;
   element.setAttribute('aria-label', accessible);
@@ -184,29 +174,39 @@ function renderActivity(data) {
   $('#agent-count').textContent = data.agents.length;
   target.replaceChildren();
   if (!data.agents.length) {
-    target.append(empty(state.snapshot.agents.length ? 'No agents match your filters. Clear the filters to see your workspace.' : 'No connected agents yet. Send events or import a local transcript to begin.'));
+    target.append(empty('No recent sessions match this view. Idle sources reappear automatically on new activity. Adjust the activity window or clear filters to widen the view.'));
     $('#activity-legend').replaceChildren();
     return;
   }
-  const range = bounds(data.events);
-  append(target, append(node('div', 'activity-axis'), node('span', '', 'Agent / project'), axis(range.start, range.end), node('span', 'axis-label', 'State / last seen')));
-  for (const agent of data.agents) {
-    const displayStatus = statusOf(agent);
-    const row = node('div', `agent-row${agent.id === state.selectedAgent ? ' selected' : ''}`);
-    const label = button('', 'select-agent', agent.id, 'agent-name');
-    label.setAttribute('aria-label', `Inspect ${agent.name}, ${agent.provider}, ${displayStatus}`);
-    label.setAttribute('aria-pressed', String(agent.id === state.selectedAgent));
-    append(label, append(node('span', 'agent-primary'), node('i', `status-dot ${displayStatus}`, null, { 'aria-hidden': 'true' }), node('span', 'agent-title', agent.name), node('span', 'provider', agent.provider)), node('span', 'agent-secondary', agent.project));
-    const track = node('div', 'lane-track', null, { 'aria-label': `${agent.name} activity` });
-    const agentEvents = data.events.filter((event) => event.agentId === agent.id);
-    // The overview overlays lanes; the inspector separates them on the same clock.
-    for (const event of [...agentEvents].sort((a, b) => timestamp(a.startedAt) - timestamp(b.startedAt))) {
-      const segment = mark(event, range);
-      if (segment) track.append(segment);
+  const range = data.range;
+  append(target, append(node('div', 'activity-axis'), node('span', '', 'Session / project'), axis(range.start, range.end), node('span', 'axis-label', 'State / last activity')));
+  const groups = groupActivityByProvider(data.agents, data.latestActivity);
+  for (const [index, group] of groups.entries()) {
+    const headingId = `activity-group-${index}`;
+    const section = node('section', 'activity-group', null, { 'aria-labelledby': headingId });
+    const count = group.agents.length;
+    section.append(append(node('h3', 'activity-group-heading', null, { id: headingId }), node('span', 'activity-group-name', group.label), node('span', 'activity-group-count', ` ${count} active ${count === 1 ? 'session' : 'sessions'}`)));
+    for (const agent of group.agents) {
+      const latest = data.latestActivity.get(agent.id);
+      const displayStatus = statusOf(agent, latest);
+      const row = node('div', `agent-row${agent.id === state.selectedAgent ? ' selected' : ''}`);
+      const label = button('', 'select-agent', agent.id, 'agent-name');
+      label.setAttribute('aria-label', `Inspect ${agent.name}, ${agent.provider}, ${displayStatus}`);
+      label.setAttribute('title', agent.name);
+      label.setAttribute('aria-pressed', String(agent.id === state.selectedAgent));
+      append(label, append(node('span', 'agent-primary'), node('i', `status-dot ${displayStatus}`, null, { 'aria-hidden': 'true' }), node('span', 'agent-title', agent.name, { title: agent.name }), node('span', 'provider', agent.provider)), node('span', 'agent-secondary', agent.project));
+      const track = node('div', 'lane-track', null, { 'aria-label': `${agent.name} activity` });
+      const agentEvents = data.events.filter((event) => event.agentId === agent.id);
+      // The overview overlays lanes; the inspector separates them on the same clock.
+      for (const event of [...agentEvents].sort((a, b) => timestamp(a.startedAt) - timestamp(b.startedAt))) {
+        const segment = mark(event, range);
+        if (segment) track.append(segment);
+      }
+      const readout = append(node('div', 'agent-readout'), node('span', `state-label ${displayStatus}`, capitalize(displayStatus)), node('span', '', age(latest)));
+      append(row, label, track, readout);
+      section.append(row);
     }
-    const readout = append(node('div', 'agent-readout'), node('span', `state-label ${displayStatus}`, capitalize(displayStatus)), node('span', '', age(agent.lastSeen)));
-    append(row, label, track, readout);
-    target.append(row);
+    target.append(section);
   }
   $('#activity-legend').replaceChildren(...legend(data.events.filter((event) => eventEnd(event) >= range.start && timestamp(event.startedAt) <= range.end)).childNodes);
 }
@@ -279,7 +279,7 @@ function renderQueues(data) {
   $('#handoffs').replaceChildren(handoffs.length ? list : empty(state.completed ? 'No handoffs in this view.' : 'No open handoffs. Offered work will appear here.'));
 }
 function selectAgent(id, spanId = null) {
-  if (!agentById(id)) return;
+  if (!scope().agents.some(agent => agent.id === id)) return;
   if (!state.selectedAgent) previousScroll = window.scrollY;
   state.selectedAgent = id;
   state.selectedSpan = spanId;
@@ -299,7 +299,7 @@ function closeInspector() {
 }
 function spanDetails(event) {
   if (!event) return empty('Select a segment to inspect its recorded details.');
-  const durationText = event.endedAt ? duration(eventEnd(event) - timestamp(event.startedAt)) : `Open · ${duration(now() - timestamp(event.startedAt))}`;
+  const durationText = event.endedAt ? duration(eventEnd(event) - timestamp(event.startedAt)) : 'Open · end not reported';
   const details = node('div', 'span-detail');
   append(details, append(node('div', 'span-detail-heading'), node('h3', '', `${capitalize(event.kind)} · ${event.label}`), node('span', 'span-detail-meta', `${dateTime(event.startedAt)} · ${durationText}`)), node('pre', '', event.detail || 'No additional detail was recorded.'));
   return details;
@@ -307,7 +307,7 @@ function spanDetails(event) {
 function waterfall(events) {
   const content = node('div', 'waterfall');
   if (!events.length) { content.append(empty('No spans have been recorded for this agent.')); return content; }
-  const range = bounds(events, false);
+  const range = bounds();
   const lanes = [...new Set(events.map((event) => event.laneId))].sort((a, b) => a === 'main' ? -1 : b === 'main' ? 1 : a.localeCompare(b));
   content.append(append(node('div', 'waterfall-axis'), node('span', '', 'Lane'), axis(range.start, range.end), node('span', 'num', 'Elapsed')));
   for (const lane of lanes) {
@@ -316,7 +316,7 @@ function waterfall(events) {
     for (const event of laneEvents) { const segment = mark(event, range, 'inspector'); if (segment) track.append(segment); }
     const start = Math.min(...laneEvents.map((event) => timestamp(event.startedAt)));
     const end = Math.max(...laneEvents.map(eventEnd));
-    content.append(append(node('div', 'waterfall-row'), node('span', 'waterfall-label', lane === 'main' ? 'Main agent' : lane, { title: lane }), track, node('span', 'waterfall-duration', duration(end - start))));
+    content.append(append(node('div', 'waterfall-row'), node('span', 'waterfall-label', lane === 'main' ? 'Main agent' : lane, { title: lane }), track, node('span', 'waterfall-duration', laneEvents.every(event => event.endedAt) ? duration(end - start) : '—')));
   }
   const key = legend(events); key.classList.add('waterfall-footer');
   append(content, key, spanDetails(events.find((event) => event.id === state.selectedSpan)));
@@ -339,20 +339,27 @@ function timelineView(events) {
   }
   return list;
 }
-function renderInspector() {
+function renderInspector(data = state.snapshot ? scope() : null) {
   const container = $('#inspector');
-  const agent = agentById(state.selectedAgent);
+  const agent = data?.agents.find(agent => agent.id === state.selectedAgent);
   container.hidden = !agent;
   document.body.classList.toggle('expanded', Boolean(agent && state.expanded));
   document.body.classList.toggle('mobile-detail', Boolean(agent));
-  if (!agent) { container.replaceChildren(); return; }
-  const events = state.snapshot.events.filter((event) => event.agentId === agent.id);
+  if (!agent) {
+    const expired = Boolean(state.selectedAgent);
+    state.selectedAgent = null; state.selectedSpan = null; state.expanded = false;
+    container.replaceChildren();
+    if (expired) { announce('Session left the current activity view. It will reappear on new activity.'); $('#window').focus({ preventScroll: true }); }
+    return;
+  }
+  const events = data.events.filter((event) => event.agentId === agent.id);
+  if (!events.some(event => event.id === state.selectedSpan)) state.selectedSpan = null;
   const header = node('div', 'inspector-header');
   const identity = node('div', '');
-  append(identity, append(node('div', 'inspector-heading'), node('h2', '', agent.name, { id: 'inspector-name', tabindex: '-1' }), node('span', 'provider', agent.provider), node('span', 'muted', capitalize(statusOf(agent)))), node('p', 'inspector-path', agent.cwd || agent.project));
+  append(identity, append(node('div', 'inspector-heading'), node('h2', '', agent.name, { id: 'inspector-name', tabindex: '-1' }), node('span', 'provider', agent.provider), node('span', 'muted', capitalize(statusOf(agent, data.latestActivity.get(agent.id))))), node('p', 'inspector-path', agent.cwd || agent.project));
   const facts = node('div', 'inspector-facts');
   const context = agent.contextUsed === null ? '—' : `${numberFormat.format(agent.contextUsed)}${agent.contextLimit === null ? ' tokens' : ` / ${numberFormat.format(agent.contextLimit)} tokens`}`;
-  for (const [label, value] of [['Started', dateTime(agent.startedAt)], ['Last seen', age(agent.lastSeen)], ['Context', context]]) facts.append(append(node('span', ''), node('span', '', `${label} `), node('strong', '', value)));
+  for (const [label, value] of [['Started', dateTime(agent.startedAt)], ['Last activity', age(data.latestActivity.get(agent.id))], ['Context', context]]) facts.append(append(node('span', ''), node('span', '', `${label} `), node('strong', '', value)));
   identity.append(facts);
   const source = state.snapshot.provenance?.[agent.id];
   const provenance = node('div', 'inspector-provenance', null, { 'aria-label': 'Source enrollment' });
@@ -374,9 +381,9 @@ function renderInspector() {
     tabs.append(control);
   }
   const body = node('div', 'inspector-body', null, { id: 'inspector-content', role: 'tabpanel', 'aria-labelledby': `tab-${state.tab}`, tabindex: '0' });
-  body.append(node('p', 'inspector-description', state.tab === 'waterfall' ? `${events.length} recorded spans · shared clock across lanes · gaps remain visible` : state.tab === 'console' ? 'Recorded labels and details, newest first. This is not an interactive terminal.' : 'Recorded events, newest first. Select an event to inspect its span.'));
+  body.append(node('p', 'inspector-description', state.tab === 'waterfall' ? `${events.length} spans in the last ${state.window} minutes · shared clock across lanes` : state.tab === 'console' ? `Labels and details in the last ${state.window} minutes, newest first. This is not an interactive terminal.` : `Events in the last ${state.window} minutes, newest first. Select an event to inspect its span.`));
   body.append(state.tab === 'waterfall' ? waterfall(events) : state.tab === 'console' ? consoleView(events) : timelineView(events));
-  body.append(node('p', 'inspector-note', 'Span timing reflects what the integration reported. Missing activity is not inferred.'));
+  body.append(node('p', 'inspector-note', 'Span timing reflects what the integration reported. Open spans mark their recorded start; an end or continued activity is not inferred.'));
   container.replaceChildren(header, tabs, body);
 }
 function renderOnboarding() {
@@ -425,13 +432,13 @@ function render() {
   const inspectionScroll = ['.console', '.timeline-list', '.span-detail pre'].map((selector) => [selector, $(selector)?.scrollTop ?? 0]);
   const openDetails = new Set([...document.querySelectorAll('.queue-item details[open]')].map((detail) => detail.dataset.details));
   const data = scope();
-  updateOptions('#project', state.snapshot.agents.map((agent) => agent.project), 'All projects', state.project);
-  updateOptions('#provider', state.snapshot.agents.map((agent) => agent.provider), 'All providers', state.provider);
+  updateOptions('#project', data.availableAgents.map((agent) => agent.project), 'All projects', state.project);
+  updateOptions('#provider', data.availableAgents.map((agent) => agent.provider), 'All providers', state.provider);
   $('#clear-filters').hidden = !(state.search || state.project || state.provider || state.status);
   const mode = $('#mode-notice');
   mode.hidden = state.snapshot.mode !== 'demo';
   if (!mode.hidden) mode.replaceChildren(node('strong', '', 'Demo workspace'), node('span', '', 'Fictional agents and activity. Start without --demo to connect your own workspace.'));
-  renderSummary(data); renderActivity(data); renderRuns(data); renderQueues(data); renderInspector(); renderOnboarding(); renderFreshness();
+  renderSummary(data); renderActivity(data); renderRuns(data); renderQueues(data); renderInspector(data); renderOnboarding(); renderFreshness();
   for (const details of document.querySelectorAll('.queue-item details')) if (openDetails.has(details.dataset.details)) details.open = true;
   for (const [selector, scrollTop] of inspectionScroll) if ($(selector)) $(selector).scrollTop = scrollTop;
   const focused = focusKey ? [...document.querySelectorAll('[data-focus]')].find((element) => element.dataset.focus === focusKey) : focusId ? document.getElementById(focusId) : null;
@@ -455,7 +462,7 @@ function clearActivity() {
   state.expanded = false; state.allRuns = false; state.completed = false; state.pending = false;
   state.receivedAt = 0; state.clockOffset = 0; previousScroll = 0;
   for (const key of ['search', 'project', 'provider', 'status']) { state[key] = ''; $(`#${key}`).value = ''; }
-  state.window = 'all'; $('#window').value = 'all';
+  state.window = '5'; $('#window').value = '5';
   $('#operator-name').value = ''; $('#access-token').value = '';
   $('#session-description').textContent = 'A server token is required to read activity. Reader tokens allow inspection; action tokens also allow coordination.';
   $('#announcement').textContent = ''; $('#connect-error').textContent = ''; $('#connect-error').hidden = true;
@@ -570,5 +577,6 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && state.selectedAgent && !$('#connect-dialog').open) closeInspector();
 });
 window.addEventListener('pagehide', lock);
-setInterval(() => { if (state.snapshot && !document.hidden && !$('#connect-dialog').open) render(); }, 15_000);
+document.addEventListener('visibilitychange', () => { if (state.snapshot && !document.hidden) render(); });
+setInterval(() => { if (state.snapshot && !document.hidden) render(); }, 2_000);
 render();

@@ -28,6 +28,48 @@ test('Claude imports metadata, instantaneous thinking, paired tools, and explici
   assert.ok(result.commands.every((command) => ['agent.upsert', 'span.upsert'].includes(command.type)));
 });
 
+test('Claude uses explicit stop reasons across split assistant records for turn state', () => {
+  const row = (at, stop_reason, content) => ({ type: 'assistant', timestamp: at, message: { stop_reason, content } });
+  const working = row(start, 'tool_use', [{ type: 'thinking', thinking: 'Synthetic reasoning' }]);
+  const idle = row(end, 'end_turn', [{ type: 'text', text: 'Still working; all checks passed' }]);
+  assert.equal(agent(parse([working], 'claude')).status, 'working');
+  assert.equal(agent(parse([working, idle], 'claude')).status, 'idle');
+  assert.equal(agent(parse([row(start, 'end_turn', [{ type: 'thinking', thinking: 'Synthetic final block' }])], 'claude')).status, 'idle');
+  assert.ok(parse([working, idle], 'claude').commands.every(command => ['agent.upsert', 'span.upsert'].includes(command.type)));
+});
+
+test('Claude lifecycle follows append order despite timestamp regression and ignores metadata-only user rows', () => {
+  const result = parse([
+    { type: 'assistant', timestamp: end, message: { stop_reason: 'tool_use', content: [] } },
+    { type: 'assistant', timestamp: start, message: { stop_reason: 'end_turn', content: [] } },
+    ...['isMeta', 'isVisibleInTranscriptOnly', 'isCompactSummary'].map(flag => ({ type: 'user', timestamp: end,
+      [flag]: true, message: { content: 'Synthetic metadata' } })),
+    { type: 'system', subtype: 'stop_hook_summary', timestamp: end },
+  ], 'claude');
+  assert.equal(agent(result).status, 'idle');
+  assert.equal(agent(result).lastSeen, '2026-01-02T09:00:05.000Z');
+});
+
+test('Claude new input invalidates old terminal state without treating user text as a start signal', () => {
+  const idle = { type: 'assistant', timestamp: start, message: { stop_reason: 'end_turn', content: [] } };
+  const input = { type: 'user', timestamp: end, message: { content: 'Synthetic next prompt or task notification' } };
+  assert.equal(agent(parse([idle, input], 'claude')).status, 'unknown');
+  const working = { ...idle, message: { stop_reason: 'tool_use', content: [] } };
+  const output = { ...input, message: { content: [{ type: 'tool_result', tool_use_id: 'synthetic-call', content: 'Synthetic result' }] } };
+  assert.equal(agent(parse([working, output], 'claude')).status, 'working');
+  assert.equal(agent(parse([output], 'claude')).status, 'unknown');
+});
+
+test('Claude missing stop reasons preserve evidence while unknown reasons and API errors cannot prove a live state', () => {
+  const row = (stop_reason, extra = {}) => ({ type: 'assistant', timestamp: start,
+    message: { stop_reason, content: [{ type: 'text', text: 'Synthetic response' }] }, ...extra });
+  assert.equal(agent(parse([row(undefined)], 'claude')).status, 'unknown');
+  assert.equal(agent(parse([row('end_turn'), row(undefined)], 'claude')).status, 'idle');
+  assert.equal(agent(parse([row('tool_use'), row('future_reason')], 'claude')).status, 'unknown');
+  assert.equal(agent(parse([row('tool_use'), row('stop_sequence', { isApiErrorMessage: true })], 'claude')).status, 'unknown');
+  assert.equal(agent(parse([row('end_turn', { isApiErrorMessage: true })], 'claude')).status, 'unknown');
+});
+
 test('Codex imports lifecycle, preserves gaps, and does not report task correctness from completion', () => {
   const result = parseTranscript(fixture('codex-rollout.jsonl'), { provider: 'codex', sourceId: 'fixture-codex' });
   assert.equal(agent(result).project, 'fictional-garden');
