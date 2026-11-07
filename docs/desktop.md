@@ -47,9 +47,13 @@ Discovery runs every ten seconds and selected logs are polled every two seconds 
 
 File size changes trigger another read even if Windows has not refreshed an open file's modification time. Inactivity is decided from producer event timestamps, rather than modification time or a title change. Old Claude files receive a bounded tail check; unchanged checks reuse a bounded metadata cache, and appended bytes invalidate it. A recent index update can nominate a Codex candidate but does not manufacture recent activity in the dashboard.
 
-Claude records must match the selected session and an allowed working directory. Later rows may omit `cwd` and inherit a previously verified directory or scoped discovery metadata. An explicit foreign directory revokes that inherited scope until an allowed directory is reported again.
+Claude message and `api-request` records must match the selected session and an allowed working directory. Later rows may omit `cwd` and inherit a previously verified directory or scoped discovery metadata. A foreign session or explicit foreign directory revokes that inherited scope until a matching-session record reports an allowed directory again. Request records require a nonempty string `id`; requests marked as API errors, metadata, transcript-only, or compact summaries are skipped. Only `type`, `id`, `sessionId`, `timestamp`, and optional `cwd` reach the adapter for accepted requests. Full request parameters are not retained in preview details.
 
 Working status follows explicit lifecycle evidence from the shared adapters. Missing evidence remains unknown. The dashboard still marks evidence older than two minutes stale and defaults to a five-minute activity window. An operating-system window, unmatched tool call, or file modification alone does not prove that an agent is currently executing.
+
+Claude thinking blocks with valid recorded `thinkingDurationMs` become completed intervals positioned ending at the record timestamp; the duration is reported but its absolute placement is approximate because logging can lag the stream. Missing or invalid durations remain instants. Advisor `server_tool_use` / `advisor_tool_result` pairs appear as subagent activity. A top-level `api-request` becomes a `Response requested` instant and reports working, using its producer timestamp for activity freshness.
+
+For a recently reported Working session, the dashboard can show a dashed `Awaiting next event` tail after the latest recorded event. This display hint is capped at two minutes and is not a real event, measured duration, or proof of liveness. It does not refresh last-seen time or extend the activity window; a session without new recorded events still expires from that window.
 
 ## Bounds and source lifecycle
 

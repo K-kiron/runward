@@ -20,6 +20,14 @@ export function eventActivityTime(event, now) {
   return end !== null && end >= start ? end : start;
 }
 
+// Display the gap since a recent Working report separately from measured spans.
+// This is not a heartbeat and must never feed admission, ordering or durations.
+export function awaitingEventRange(agent, latestActivity, now) {
+  if (agent.status !== 'working' || !Number.isFinite(latestActivity) ||
+      latestActivity >= now || now - latestActivity > 120_000) return null;
+  return { start: latestActivity, end: now };
+}
+
 export function recentActivity(snapshot, { now, windowMinutes = DEFAULT_WINDOW_MINUTES }) {
   const minutes = [5, 15, 60].includes(Number(windowMinutes)) ? Number(windowMinutes) : DEFAULT_WINDOW_MINUTES;
   const range = { start: now - minutes * 60_000, end: now };

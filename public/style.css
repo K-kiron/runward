@@ -585,6 +585,25 @@ button,select,input {
   color: var(--faint)
 }
 
+.awaiting-event,.awaiting-mark {
+  border: 1px dashed var(--muted);
+  background: repeating-linear-gradient(135deg, transparent 0 4px, var(--control) 4px 6px)
+}
+
+.awaiting-event {
+  position: absolute;
+  top: 3px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 2px
+}
+
+.agent-readout .activity-note {
+  display: block;
+  font-size: 10px;
+  margin-top: 2px
+}
+
 .span-mark {
   position: absolute;
   top: 3px;
