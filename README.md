@@ -4,7 +4,9 @@ A local operations desk for coding agents. See who is working, inspect parallel 
 
 The standalone Runward server runs on your machine with **Node.js 22+ and no runtime dependencies**. It serves a browser interface on loopback, stores live state locally, and makes no outbound requests. Demo data is synthetic and clearly labeled.
 
-![Runward demo with agent activity lanes, run results, attention requests, and handoffs](docs/screenshot.png)
+![Runward synthetic demo with platform-grouped activity, working counts, runs, and coordination queues](docs/screenshot.png)
+
+The screenshot uses the 15-minute window to show more synthetic history; the default activity window is five minutes.
 
 ## Try it
 
@@ -26,6 +28,7 @@ Live mode requires an explicit domain/environment or a config file. It persists 
 
 ## What it does
 
+- Recently active sessions grouped by platform, newest activity first within each group. The default five-minute window also applies to timeline and inspector events; choose 15 minutes or an hour to widen it. Sessions disappear after inactivity and reappear on new producer activity. Runs and coordination queues follow the visible sessions.
 - Project, provider, and status filters with consistent counts and freshness indicators.
 - Shared-clock waterfall lanes, including overlap, idle gaps, and open spans. Click a segment to inspect its timestamp, duration, and detail.
 - Console and chronological event views; run results with check counts and failure details.
@@ -34,6 +37,12 @@ Live mode requires an explicit domain/environment or a config file. It persists 
 - Selected-file transcript import for Codex, Claude Code, DSH (DeepSeek Harness), OpenCode, OpenHands, and Gemini CLI, plus a provider-neutral event API.
 
 Claims are coordination records. They **do not launch agents, send prompts, approve tool calls, or execute terminal commands**. Console content is read only. Provider names identify incoming data, not an affiliation.
+
+Recent activity means a reported agent `lastSeen` or span start/end timestamp. An unmatched open span does not prove continued activity, and an unknown lifecycle state stays unknown. Missing, invalid, or future timestamps do not count as current activity.
+
+The working counter shows working sessions out of recently active sessions in the filtered view. Stale and unknown sessions do not count as working. Claude Code uses explicit assistant `stop_reason` fields: `tool_use` reports an in-progress turn and `end_turn` reports idle. A turn awaiting tool permission can still be in progress; transcript records alone do not distinguish it from executing a tool.
+
+Codex and Claude Code transcript imports report session activity and lifecycle evidence. They do not create verification runs, handoffs, or attention requests; those panels remain empty unless an integration submits the corresponding [structured events](docs/events.md). A completed conversation is not automatically a passed run, and a subagent call is not automatically a handoff.
 
 ## OpenHands Agent Canvas App
 
@@ -44,6 +53,8 @@ The App targets the beta host API 1 on supported local backends. OpenHands Cloud
 ## Connect actual sessions
 
 Choose specific transcript files for one data-access domain; Runward never scans your home directory, discovers provider logins, or edits provider settings.
+
+Session labels come from incoming data. Codex and Claude Code imports currently use the provider and transcript session ID, which may be a UUID. Integrations can supply a readable `agent.upsert.name`; Runward does not read desktop window titles or automatically discover open conversations.
 
 ```sh
 node cli.mjs --domain personal --environment laptop --watch "codex=/absolute/path/rollout.jsonl"
