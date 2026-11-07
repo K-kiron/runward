@@ -241,6 +241,65 @@ test('appending with frozen Claude mtime invalidates a cached inactive tail', as
   assert.deepEqual(appended.files.map(candidate => candidate.sessionId), [id(1)]);
 });
 
+test('request-only append rediscovers an inactive Claude file with frozen mtime', async t => {
+  const { now, current, options, transcript } = await oldMtimeFixture(t);
+  const file = await transcript(1, 'unsupported old transcript\n');
+  assert.equal((await discoverClaude(options)).files.length, 0);
+  await appendFile(file, JSON.stringify({ type: 'api-request', id: 'request-a', sessionId: id(1), cwd: current,
+    timestamp: new Date(now - 1000).toISOString(), params: { body: 'PRIVATE_REQUEST_BODY' } }) + '\n');
+  const frozen = new Date(now - 25 * 3600000);
+  await utimes(file, frozen, frozen);
+  const appended = await discoverClaude(options);
+  assert.deepEqual(appended.files.map(candidate => candidate.sessionId), [id(1)]);
+  assert.equal(appended.files[0].latestActivityAt, new Date(now - 1000).toISOString());
+  assert.equal(appended.stats.tailCheckedFiles, 1);
+  assert.doesNotMatch(JSON.stringify(appended), /PRIVATE_REQUEST_BODY/);
+});
+
+test('old Claude request tails validate scope, IDs, flags, timestamps and complete bounded records', async t => {
+  const { now, current, options, transcript } = await oldMtimeFixture(t);
+  const request = (n, changes = {}) => ({ type: 'api-request', id: `request-${n}`, sessionId: id(n), cwd: current,
+    timestamp: new Date(now - 1000).toISOString(), ...changes });
+  const cases = [
+    {}, { cwd: undefined }, { id: '' }, { id: '  ' }, { id: null }, { id: 4 },
+    { sessionId: id(99) }, { cwd: `${scopeRoot}Other/app` }, { cwd: null },
+    { timestamp: new Date(now + 1000).toISOString() }, { timestamp: '2026-02-29T12:00:00Z' },
+    { timestamp: '2026-03-01T12:00:00' }, { isApiErrorMessage: true }, { isMeta: true },
+    { isVisibleInTranscriptOnly: true }, { isCompactSummary: true },
+  ];
+  for (const [index, changes] of cases.entries()) await transcript(index + 1, JSON.stringify(request(index + 1, changes)) + '\n');
+  await transcript(20, JSON.stringify(request(20)));
+  await transcript(21, JSON.stringify(request(21)) + '\n' + JSON.stringify({ padding: 'x'.repeat(300 * 1024) }) + '\n');
+  await transcript(22, 'x'.repeat(300 * 1024) + '\n' + JSON.stringify(request(22)) + '\n');
+  await transcript(23, '{"type":"api-request","id":\n');
+  const first = await discoverClaude(options);
+  assert.deepEqual(new Set(first.files.map(file => file.sessionId)), new Set([1, 2, 22].map(id)));
+  const later = await discoverClaude({ ...options, now: now + 2000 });
+  assert.deepEqual(new Set(later.files.map(file => file.sessionId)), new Set([1, 2, 10, 22].map(id)),
+    'a previously future request is rechecked rather than cached as permanently inactive');
+});
+
+test('Claude tail freshness revokes inherited cwd after foreign requests and messages', async t => {
+  const { now, current, options, row, transcript } = await oldMtimeFixture(t);
+  const request = (n, changes = {}) => ({ type: 'api-request', id: `request-${n}`, sessionId: id(n), cwd: current,
+    timestamp: new Date(now - 1000).toISOString(), ...changes });
+  const files = [];
+  for (const [index, foreign] of [request(1, { sessionId: id(99) }), request(2, { cwd: 'C:/outside' }),
+    row(3, { sessionId: id(99) }), row(4, { cwd: 'C:/outside' })].entries()) {
+    const n = index + 1;
+    files.push(await transcript(n, [request(n, { timestamp: new Date(now - 26 * 3600000).toISOString() }), foreign,
+      request(n, { cwd: undefined })].map(value => JSON.stringify(value)).join('\n') + '\n'));
+  }
+  assert.equal((await discoverClaude(options)).files.length, 0);
+  for (const [index, file] of files.entries()) {
+    await appendFile(file, JSON.stringify(request(index + 1)) + '\n');
+    const frozen = new Date(now - 25 * 3600000);
+    await utimes(file, frozen, frozen);
+  }
+  assert.deepEqual(new Set((await discoverClaude(options)).files.map(file => file.sessionId)), new Set([1, 2, 3, 4].map(id)),
+    'an explicit allowed cwd restores matching-session scope');
+});
+
 test('future Claude timestamps are rechecked when time advances without file changes', async t => {
   const { now, options, row, transcript } = await oldMtimeFixture(t);
   await transcript(1, `${JSON.stringify(row(1, { timestamp: new Date(now + 1000).toISOString() }))}\n`);

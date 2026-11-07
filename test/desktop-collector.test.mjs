@@ -10,6 +10,8 @@ const roots = ['C:/scope/Company'];
 const row = (n, changes = {}) => JSON.stringify({ type: 'assistant', uuid: `row-${n}`, sessionId: 'session-a', cwd,
   timestamp: new Date(Date.UTC(2026, 10, 7, 0, 0, n)).toISOString(), message: { content: [{ type: 'text', text: `synthetic-${n}` }] }, ...changes });
 const source = { provider: 'claude', path: 'C:/fixture/log.jsonl', sessionId: 'session-a' };
+const request = (n, changes = {}) => JSON.stringify({ type: 'api-request', id: `request-${n}`, sessionId: 'session-a', cwd,
+  timestamp: new Date(Date.UTC(2026, 10, 7, 0, 0, n)).toISOString(), ...changes });
 const fixture = async t => {
   const directory = await mkdtemp(join(tmpdir(), 'runward-collector-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -206,6 +208,70 @@ test('scoped Claude sessions retain lifecycle rows that omit repeated cwd', () =
   const parsed = commandsForLog([idle, working, foreign, missing].join('\n'), source, roots);
   assert.equal(parsed.commands[0].data.status, 'working');
   assert.equal(parsed.rejectedRows, 2);
+});
+
+test('Claude request metadata imports without retaining request bodies or extra message fields', () => {
+  const parsed = commandsForLog(request(1, { params: { messages: [{ content: 'PRIVATE_REQUEST_BODY' }] },
+    message: { content: [{ type: 'text', text: 'PRIVATE_EXTRA_MESSAGE' }] }, detail: 'PRIVATE_EXTRA_DETAIL' }), source, roots);
+  assert.equal(parsed.commands[0].data.status, 'working');
+  const spans = parsed.commands.filter(command => command.type === 'span.upsert');
+  assert.equal(spans.length, 1);
+  assert.equal(spans[0].data.label, 'Response requested');
+  assert.equal(spans[0].data.startedAt, spans[0].data.endedAt);
+  assert.doesNotMatch(JSON.stringify(parsed), /PRIVATE_/);
+  for (const id of ['', '   ', null, 4]) {
+    assert.equal(commandsForLog(request(2, { id }), { ...source, cwd }, roots).commands.length, 0);
+  }
+  for (const flag of ['isApiErrorMessage', 'isMeta', 'isVisibleInTranscriptOnly', 'isCompactSummary']) {
+    const flagged = request(2, { [flag]: true });
+    assert.equal(commandsForLog(flagged, { ...source, cwd }, roots).commands.length, 0);
+    const idle = row(1, { message: { content: [], stop_reason: 'end_turn' } });
+    const retained = commandsForLog([idle, flagged].join('\n'), source, roots);
+    assert.equal(retained.commands[0].data.status, 'idle', `${flag} request cannot assert working`);
+    assert.equal(retained.commands.filter(command => command.type === 'span.upsert').length, 0);
+  }
+});
+
+test('Claude requests obey session and cwd scope with inheritance revoked by foreign rows', () => {
+  const missing = request(2, { cwd: undefined });
+  assert.equal(commandsForLog(missing, source, roots).commands.length, 0);
+  assert.equal(commandsForLog(missing, { ...source, cwd }, roots).commands[0].data.status, 'working');
+  for (const foreign of [request(3, { sessionId: 'foreign' }), request(3, { cwd: 'C:/outside' }),
+    row(3, { sessionId: 'foreign' }), row(3, { cwd: 'C:/outside' })]) {
+    const parsed = commandsForLog([request(1), foreign, missing, request(4)].join('\n'), source, roots);
+    assert.equal(parsed.rejectedRows, 2);
+    assert.deepEqual(parsed.commands.filter(command => command.type === 'span.upsert').map(command => command.data.startedAt),
+      [JSON.parse(request(1)).timestamp, JSON.parse(request(4)).timestamp]);
+  }
+});
+
+test('request-only Claude logs use producer activity timestamps rather than file mtime', async t => {
+  const file = await fixture(t);
+  let clock = Date.now();
+  const old = new Date(clock - 10 * 60_000).toISOString();
+  await writeFile(file, request(1, { timestamp: old, cwd: undefined }) + '\n');
+  await utimes(file, new Date(clock), new Date(clock));
+  const batches = [];
+  const collector = createCollector({ now: () => clock,
+    config: { claudeScopeRoot: roots[0], discoveryIntervalMs: 100000, maxSessionAgeMinutes: 5 },
+    app: { dispatchSource: async (key, commands) => batches.push(commands) },
+    discover: async () => ({ roots, stats: {}, files: [{ path: file, sessionId: 'session-a', cwd }] }) });
+  await collector.poll();
+  assert.equal(batches.length, 0);
+  assert.equal(collector.status().files[0].skipped, 'inactive');
+  const recent = new Date(clock).toISOString();
+  await appendFile(file, request(2, { timestamp: recent, cwd: undefined, params: { body: 'PRIVATE_BODY' } }) + '\n');
+  await utimes(file, new Date(clock - 3600_000), new Date(clock - 3600_000));
+  await collector.poll();
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0][0].data.status, 'working');
+  assert.equal(collector.status().files[0].latestActivityAt, recent);
+  assert.doesNotMatch(JSON.stringify(batches), /PRIVATE_BODY/);
+  clock += 6 * 60_000;
+  await utimes(file, new Date(clock), new Date(clock));
+  await collector.poll();
+  assert.equal(batches.length, 1, 'touching a request log cannot extend activity');
+  assert.equal(collector.status().files[0].skipped, 'inactive');
 });
 
 test('Codex discovery imports multiple main sessions and finds new sessions on refresh', async t => {
